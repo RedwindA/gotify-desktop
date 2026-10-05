@@ -26,6 +26,15 @@ The web UI that ships with gotify/server is good for managing a server. It is no
 
 What the web UI still does better: it needs no install, works from any device with a browser, and manages the server: applications, clients, users and plugins. Gotify Desktop only receives messages, so keep using the web UI for those.
 
+## Installing
+
+Download the package for your system from [Releases](../../releases): the setup `.exe` for Windows, the `.dmg` for macOS, the `.deb` or the `.tar.gz` with `install.sh` for Linux.
+
+The builds are not signed, so the system warns the first time you open them:
+
+- **Windows:** SmartScreen says "Windows protected your PC". Click **More info**, then **Run anyway**.
+- **macOS:** after the first attempt to open the app, go to **System Settings → Privacy & Security** and click **Open Anyway**. Or run `xattr -dr com.apple.quarantine "/Applications/Gotify Desktop.app"`.
+
 ## Building
 
 You need Go and [Bun](https://bun.sh). Everything builds without cgo.

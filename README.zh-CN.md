@@ -26,6 +26,15 @@ gotify/server 自带的 WebUI 很适合管理服务器，但用来在桌面上�
 
 WebUI 仍然更擅长的地方：不用安装，任何有浏览器的设备都能用，而且能管理服务器，包括应用、客户端、用户和插件。Gotify Desktop 只负责接收消息，这些操作请继续在 WebUI 里完成。
 
+## 安装
+
+在 [Releases](../../releases) 下载对应系统的安装包：Windows 用 setup `.exe`，macOS 用 `.dmg`，Linux 用 `.deb`，或 `.tar.gz` 配合 `install.sh`。
+
+安装包没有签名，第一次打开时系统会警告：
+
+- **Windows：** SmartScreen 提示「Windows 已保护你的电脑」，点 **更多信息**，再点 **仍要运行**。
+- **macOS：** 第一次尝试打开后，到 **系统设置 → 隐私与安全性** 点 **仍要打开**。也可以运行 `xattr -dr com.apple.quarantine "/Applications/Gotify Desktop.app"`。
+
 ## 构建
 
 需要 Go 和 [Bun](https://bun.sh)。整个项目不依赖 cgo。

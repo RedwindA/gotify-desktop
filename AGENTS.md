@@ -44,4 +44,9 @@ go run ./cmd/preview                       # the built page with demo data at ht
 bun run --cwd frontend screenshots         # dist/screenshots/*.png through the preview and Chrome, light and dark
 # Windows/macOS/Linux packages into build/ (macOS signing and .dmg need a Mac; the Windows installer needs makensis)
 go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64,windows/arm64,darwin/universal,linux/amd64 -o build
+
+# Releases: bump "version" in mygo.json, add its "## <version>" section to CHANGELOG.md (the update
+# window's notes), then push the tag v<version>. .github/workflows/release.yml tests, builds every
+# platform unsigned with signed updates (secret MYGO_UPDATER_PRIVATE_KEY) and drafts the GitHub
+# release; publishing the draft is what installed apps update to (updater plugin, tray item).
 ```
