@@ -1,14 +1,16 @@
+import { useAppShellMobile } from "@astryxdesign/core/AppShell";
 import { Avatar } from "@astryxdesign/core/Avatar";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Icon } from "@astryxdesign/core/Icon";
 import { MoreMenu } from "@astryxdesign/core/MoreMenu";
+import { MobileNav } from "@astryxdesign/core/MobileNav";
 import { NavIcon } from "@astryxdesign/core/NavIcon";
 import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { BellIcon, BellOffIcon, InboxIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import type { App, Server, State } from "./mygo";
 import { useT, type Messages } from "./i18n";
-import { go, useAppImage, useNow, type Route } from "./store";
+import { go as goTo, useAppImage, useNow, type Route } from "./store";
 
 export interface ServerActions {
   edit(sv: Server): void;
@@ -52,23 +54,48 @@ export function AppAvatar({ serverId, app, size }: { serverId: number; app: App 
   return <Avatar size={size} shape="rounded" name={app?.name || "?"} src={src} tooltip={false} />;
 }
 
-export function Sidebar({ state, route, actions, onAdd }: { state: State; route: Route; actions: ServerActions; onAdd(): void }) {
+export function Sidebar({
+  state,
+  route,
+  actions,
+  onAdd,
+  drawer = false,
+}: {
+  state: State;
+  route: Route;
+  actions: ServerActions;
+  onAdd(): void;
+  drawer?: boolean;
+}) {
   const t = useT();
+  // In a narrow window the sidebar is a drawer, which closes once a page is picked.
+  const { closeMobileNav } = useAppShellMobile();
+  const go = (r: Route) => {
+    goTo(r);
+    closeMobileNav();
+  };
   const isSel = (serverId: number, appId: number) =>
     route.page === "messages" && route.serverId === serverId && route.appId === appId;
-  return (
-    <SideNav
-      header={
-        <div className="sidenav-top drag">
-          <SideNavHeading heading="Gotify" subheading="Desktop" icon={<NavIcon icon={<Icon icon={BellIcon} size="sm" />} />} />
-        </div>
-      }
-      footer={
-        <SideNavSection title={t.appName} isHeaderHidden>
-          <SideNavItem label={t.addServer} icon={PlusIcon} onClick={onAdd} />
-          <SideNavItem label={t.settings} icon={SettingsIcon} isSelected={route.page === "settings"} onClick={() => go({ page: "settings" })} />
-        </SideNavSection>
-      }>
+  const header = (
+    <div className="sidenav-top drag">
+      <SideNavHeading heading="Gotify" subheading="Desktop" icon={<NavIcon icon={<Icon icon={BellIcon} size="sm" />} />} />
+    </div>
+  );
+  const footer = (
+    <SideNavSection title={t.appName} isHeaderHidden>
+      <SideNavItem
+        label={t.addServer}
+        icon={PlusIcon}
+        onClick={() => {
+          closeMobileNav();
+          onAdd();
+        }}
+      />
+      <SideNavItem label={t.settings} icon={SettingsIcon} isSelected={route.page === "settings"} onClick={() => go({ page: "settings" })} />
+    </SideNavSection>
+  );
+  const body = (
+    <>
       <SideNavSection title={t.allMessages} isHeaderHidden>
         <SideNavItem
           label={t.allMessages}
@@ -122,6 +149,20 @@ export function Sidebar({ state, route, actions, onAdd }: { state: State; route:
           ))}
         </SideNavSection>
       ))}
+    </>
+  );
+  // The drawer of a narrow window comes in from the left, where its toggle is;
+  // the default ("auto") slides in from the right the first time.
+  if (drawer)
+    return (
+      <MobileNav side="start" header={header}>
+        {body}
+        {footer}
+      </MobileNav>
+    );
+  return (
+    <SideNav header={header} footer={footer}>
+      {body}
     </SideNav>
   );
 }

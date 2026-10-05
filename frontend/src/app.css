@@ -114,3 +114,22 @@ body {
   background: var(--color-background-muted, rgb(128 128 128 / 12%));
   cursor: default;
 }
+
+/* A narrow window shows the sidebar as a drawer (below Astryx's md, 768px):
+   the page headers then start at the window's left edge, clear of controls
+   there (the traffic lights of macOS). */
+@media (width < 768px) {
+  .titlebar {
+    padding-left: var(--mygo-titlebar-inset-left, 0px);
+  }
+}
+
+.corner-toggle {
+  position: absolute;
+  top: max(var(--spacing-3, 12px), calc((var(--mygo-titlebar-height, 0px) - 32px) / 2));
+  left: calc(var(--mygo-titlebar-inset-left, 0px) + var(--spacing-3, 12px));
+}
+
+.welcome {
+  position: relative;
+}

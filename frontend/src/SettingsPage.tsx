@@ -1,5 +1,6 @@
 import { Button } from "@astryxdesign/core/Button";
 import { Heading } from "@astryxdesign/core/Heading";
+import { MobileNavToggle } from "@astryxdesign/core/MobileNav";
 import { HStack, Layout, LayoutContent, LayoutHeader, VStack } from "@astryxdesign/core/Layout";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Section } from "@astryxdesign/core/Section";
@@ -52,7 +53,10 @@ export function SettingsPage({ state, onError, onInfo }: { state: State; onError
       padding={5}
       header={
         <LayoutHeader hasDivider className="titlebar">
-          <Heading level={1}>{t.settings}</Heading>
+          <HStack gap={3} vAlign="center">
+            <MobileNavToggle label={t.openSidebar} />
+            <Heading level={1}>{t.settings}</Heading>
+          </HStack>
         </LayoutHeader>
       }
       content={

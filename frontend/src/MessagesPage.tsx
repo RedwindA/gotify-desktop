@@ -1,7 +1,9 @@
+import { useAppShellMobile } from "@astryxdesign/core/AppShell";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { Heading } from "@astryxdesign/core/Heading";
+import { MobileNavToggle } from "@astryxdesign/core/MobileNav";
 import { HStack, Layout, LayoutContent, LayoutHeader, VStack } from "@astryxdesign/core/Layout";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
@@ -154,6 +156,7 @@ export interface MessagesPageProps {
 
 export function MessagesPage({ state, serverId, appId, onRelogin, onError }: MessagesPageProps) {
   const t = useT();
+  const { isMobile } = useAppShellMobile();
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(pageSize);
@@ -267,6 +270,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       header={
         <LayoutHeader hasDivider className="titlebar">
           <HStack gap={3} vAlign="center">
+            <MobileNavToggle label={t.openSidebar} />
             <VStack gap={0.5} className="page-title">
               <Heading level={1} maxLines={1}>
                 {title}
@@ -276,7 +280,14 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
               </Text>
             </VStack>
             {unread > 0 && (
-              <Button label={t.markAllRead} icon={<CheckCheckIcon size={16} />} onClick={() => void Desktop.markAllRead(serverId, appId)} />
+              <Button
+                label={t.markAllRead}
+                icon={<CheckCheckIcon size={16} />}
+                isIconOnly={isMobile}
+                tooltip={isMobile ? t.markAllRead : undefined}
+                className="no-shrink"
+                onClick={() => void Desktop.markAllRead(serverId, appId)}
+              />
             )}
             <TextInput
               label={t.searchMessages}
@@ -286,7 +297,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
               value={search}
               onChange={setSearch}
               hasClear
-              width={240}
+              width={isMobile ? 160 : 240}
             />
           </HStack>
         </LayoutHeader>

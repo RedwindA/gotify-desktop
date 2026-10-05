@@ -3,6 +3,7 @@ import { AppShell } from "@astryxdesign/core/AppShell";
 import { Button } from "@astryxdesign/core/Button";
 import { Center } from "@astryxdesign/core/Center";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { MobileNavToggle } from "@astryxdesign/core/MobileNav";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { useToast } from "@astryxdesign/core/Toast";
 import { BellRingIcon } from "lucide-react";
@@ -19,7 +20,10 @@ import { errorText, findServer, go, refreshState, useAppState, useRoute } from "
 function Welcome({ onAdd }: { onAdd(): void }) {
   const t = useT();
   return (
-    <Center height="100%" className="drag">
+    <Center height="100%" className="drag welcome">
+      <div className="corner-toggle">
+        <MobileNavToggle label={t.openSidebar} />
+      </div>
       <EmptyState
         icon={<BellRingIcon size={48} />}
         title={t.welcomeTitle}
@@ -87,7 +91,9 @@ export function App() {
 
   return (
     <>
-      <AppShell sideNav={<Sidebar state={state} route={route} actions={actions} onAdd={openAdd} />} mobileNav={false}>
+      <AppShell
+        sideNav={<Sidebar state={state} route={route} actions={actions} onAdd={openAdd} />}
+        mobileNav={{ hasToggle: false, content: <Sidebar state={state} route={route} actions={actions} onAdd={openAdd} drawer /> }}>
         {page}
       </AppShell>
       {dialog && (

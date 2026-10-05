@@ -252,7 +252,7 @@ func (d *desktop) showWindow() {
 			return
 		}
 		w = mygo.NewWindow(mygo.WindowOptions{
-			Title: appName, Width: 1100, Height: 740, MinWidth: 760, MinHeight: 480,
+			Title: appName, Width: 1100, Height: 740, MinWidth: 420, MinHeight: 480,
 			StateKey: "main", URL: "/",
 			// The page draws the title bar: the sidebar and the page headers
 			// move the window, with the system's window controls over them.
