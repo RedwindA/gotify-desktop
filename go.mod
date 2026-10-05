@@ -6,7 +6,7 @@ require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
 	github.com/coder/websocket v1.8.15
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.2.9
+	github.com/egoist/mygo v0.2.12
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/yuin/goldmark v1.8.6
 	golang.org/x/sys v0.48.0

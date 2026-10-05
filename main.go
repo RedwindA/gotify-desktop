@@ -23,6 +23,7 @@ import (
 	"gotify-desktop/internal/app"
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/i18n"
+	"gotify-desktop/internal/nativeui"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/secret"
 )
@@ -77,8 +78,14 @@ func main() {
 		CopyText:       mygo.Clipboard.WriteText,
 		ImageBase:      imageBase,
 	})
+	// Bound whichever UI shows: mygo generate reads the bindings from here.
 	mygo.Bind(d.api.Service())
 	mygo.Protocol.Handle(imageScheme, d.api.ImageHandler())
+	if os.Getenv("GOTIFY_UI") != "web" {
+		// The window draws its own UI, which takes the events the page would.
+		d.native = nativeui.New(d.api)
+		d.api.Redirect(d.native.SetState, d.native.Navigate)
+	}
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
 		if !notify.IsActivationLaunch(args) {
 			d.showWindow()
@@ -143,6 +150,7 @@ func (d *desktop) demo() controller {
 		chart = "http://demo.localhost/chart.png"
 	}
 	f := api.Demo(chart)
+	f.Images[chart] = api.DemoChart() // for the native UI, which fetches it
 	f.OnChange = d.onChange
 	return demoController{f, d.notifier}
 }
@@ -153,6 +161,7 @@ type desktop struct {
 
 	ctrl     controller
 	api      *api.Controller
+	native   *nativeui.UI // nil when the window shows the page
 	notifier notify.Notifier
 	tray     *mygo.Tray
 
@@ -263,29 +272,40 @@ func (d *desktop) showWindow() {
 			w.Focus()
 			return
 		}
-		w = mygo.NewWindow(mygo.WindowOptions{
+		opts := mygo.WindowOptions{
 			Title: appName, Width: 1100, Height: 740, MinWidth: 420, MinHeight: 480,
 			StateKey: "main", URL: "/",
-			// The page draws the title bar: the sidebar and the page headers
-			// move the window, with the system's window controls over them.
+			// The window's content draws the title bar: the sidebar and the
+			// page headers move the window, with the system's window controls over them.
 			TitleBarStyle: mygo.TitleBarHiddenInset,
 			// The page's body background (--color-background-body of the neutral theme).
 			BackgroundColor: "light-dark(#f1f1f1, #1b1b1b)",
-		})
+		}
+		if d.native != nil {
+			opts.URL, opts.Content = "", d.native.Content()
+		}
+		w = mygo.NewWindow(opts)
 		w.SetIcon(appIcon)
-		// Links in messages open in the browser, never in the window.
-		w.Page().OnWillNavigate(func(e *mygo.NavigateEvent) {
-			if u, err := url.Parse(e.URL); err == nil && (u.Scheme == "http" || u.Scheme == "https") && !isAppOrigin(u) {
-				e.PreventDefault()
-				go mygo.Shell.OpenExternal(e.URL)
-			}
-		})
+		if d.native != nil {
+			d.native.Attach(w)
+		} else {
+			// Links in messages open in the browser, never in the window.
+			w.Page().OnWillNavigate(func(e *mygo.NavigateEvent) {
+				if u, err := url.Parse(e.URL); err == nil && (u.Scheme == "http" || u.Scheme == "https") && !isAppOrigin(u) {
+					e.PreventDefault()
+					go mygo.Shell.OpenExternal(e.URL)
+				}
+			})
+		}
 		w.OnClosed(func() {
 			d.mu.Lock()
 			if d.win == w {
 				d.win = nil
 			}
 			d.mu.Unlock()
+			if d.native != nil {
+				d.native.Detach(w)
+			}
 		})
 		d.mu.Lock()
 		d.win = w
