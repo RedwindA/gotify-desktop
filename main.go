@@ -53,6 +53,10 @@ func main() {
 	mygo.App.SetName(appName)
 	mygo.App.SetVersion(appVersion)
 	setupLogging()
+	if runtime.GOOS == "windows" && os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") == "" {
+		// Windows 11's thin overlay scrollbars instead of Chromium's classic ones.
+		os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--enable-features=msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation")
+	}
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
@@ -146,6 +150,7 @@ type desktop struct {
 	trayDirty  atomic.Bool
 	trayState  string
 	pauseTimer *time.Timer
+	theme      *string // the appearance last applied, on the main thread
 }
 
 func (d *desktop) start() {
@@ -177,6 +182,7 @@ func (d *desktop) start() {
 		mygo.App.Exit(1)
 		return
 	}
+	d.applyTheme(d.ctrl.Settings().Theme)
 	d.api.Start(d.ctrl, dataDir)
 
 	d.notifier.OnActivate(d.activated)
@@ -214,6 +220,23 @@ func (d *desktop) onChange() {
 	go d.requestTray()
 }
 
+// applyTheme gives the window, its title bar and the page the appearance the
+// settings choose. It runs on the main thread, with the tray.
+func (d *desktop) applyTheme(theme string) {
+	if d.theme != nil && *d.theme == theme {
+		return
+	}
+	d.theme = &theme
+	switch theme {
+	case "light":
+		mygo.Theme.SetSource(mygo.ThemeLight)
+	case "dark":
+		mygo.Theme.SetSource(mygo.ThemeDark)
+	default:
+		mygo.Theme.SetSource(mygo.ThemeSystem)
+	}
+}
+
 func (d *desktop) showWindow() {
 	mygo.RunOnMain(func() {
 		d.mu.Lock()
@@ -231,6 +254,9 @@ func (d *desktop) showWindow() {
 		w = mygo.NewWindow(mygo.WindowOptions{
 			Title: appName, Width: 1100, Height: 740, MinWidth: 760, MinHeight: 480,
 			StateKey: "main", URL: "/",
+			// The page draws the title bar: the sidebar and the page headers
+			// move the window, with the system's window controls over them.
+			TitleBarStyle: mygo.TitleBarHiddenInset,
 			// The page's body background (--color-background-body of the neutral theme).
 			BackgroundColor: "light-dark(#f1f1f1, #1b1b1b)",
 		})
@@ -343,6 +369,7 @@ func (d *desktop) applyTray() {
 		return
 	}
 	snap := d.ctrl.Snapshot()
+	d.applyTheme(snap.Settings.Theme)
 	offline := false
 	for _, sv := range snap.Servers {
 		if sv.State != conn.Connected {

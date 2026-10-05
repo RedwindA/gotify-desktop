@@ -265,7 +265,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       contentWidth={860}
       padding={5}
       header={
-        <LayoutHeader hasDivider>
+        <LayoutHeader hasDivider className="titlebar">
           <HStack gap={3} vAlign="center">
             <VStack gap={0.5} className="page-title">
               <Heading level={1} maxLines={1}>

@@ -31,7 +31,9 @@ type Settings struct {
 	DND              bool
 	DNDStart, DNDEnd int // minutes of day; the window may wrap midnight
 	// Language is the language the app shows: "en", "zh-CN", or "" to follow the system.
-	Language           string
+	Language string
+	// Theme is the appearance of the window: "light", "dark", or "" to follow the system.
+	Theme              string
 	HighBypassesDND    bool
 	BurstWindow        time.Duration
 	BurstMax           int

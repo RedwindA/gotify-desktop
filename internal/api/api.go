@@ -125,7 +125,18 @@ type Settings struct {
 	HighBypassesDND bool `json:"highBypassesDnd"`
 	// Language is the language the user chose; "" follows the system.
 	Language Language `json:"language"`
+	// Theme is the appearance the user chose; "" follows the system.
+	Theme Theme `json:"theme"`
 }
+
+// Theme is a light or dark appearance, or "" for the system's.
+type Theme string
+
+const (
+	ThemeSystem Theme = ""
+	ThemeLight  Theme = "light"
+	ThemeDark   Theme = "dark"
+)
 
 // Language is a language the app can show, or "" for the system's.
 type Language string
@@ -334,7 +345,7 @@ func connState(s conn.State) ConnState {
 }
 
 func settingsOf(s notify.Settings) Settings {
-	out := Settings{DND: s.DND, DNDStart: s.DNDStart, DNDEnd: s.DNDEnd, HighBypassesDND: s.HighBypassesDND, Language: Language(s.Language)}
+	out := Settings{DND: s.DND, DNDStart: s.DNDStart, DNDEnd: s.DNDEnd, HighBypassesDND: s.HighBypassesDND, Language: Language(s.Language), Theme: Theme(s.Theme)}
 	if !s.PausedUntil.IsZero() {
 		t := s.PausedUntil
 		out.PausedUntil = &t
@@ -532,6 +543,12 @@ func (d *Desktop) SetSettings(seq uint64, s Settings) error {
 		cur.Language = string(s.Language)
 	default:
 		cur.Language = ""
+	}
+	switch s.Theme {
+	case ThemeLight, ThemeDark:
+		cur.Theme = string(s.Theme)
+	default:
+		cur.Theme = ""
 	}
 	cur.PausedUntil = time.Time{}
 	if s.PausedUntil != nil {

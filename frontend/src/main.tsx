@@ -10,7 +10,7 @@ import { StrictMode, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { astryxMessages, useLang } from "./i18n";
-import { start } from "./store";
+import { start, useAppState } from "./store";
 
 /** Gives Astryx's components, and the page, the language the app shows. */
 function Localized({ children }: { children: ReactNode }) {
@@ -27,15 +27,30 @@ function Localized({ children }: { children: ReactNode }) {
 
 // ?theme=dark or ?theme=light forces an appearance, for screenshots.
 const forced = new URLSearchParams(location.search).get("theme");
-const mode = forced === "dark" || forced === "light" ? forced : "system";
+
+/** The appearance the settings choose. In the app Go also gives it to the
+ * webview, so the title bar and prefers-color-scheme follow; a browser showing
+ * the preview only gets it from here. */
+function Themed({ children }: { children: ReactNode }) {
+  const chosen = useAppState()?.settings.theme;
+  const mode = forced === "dark" || forced === "light" ? forced : chosen || "system";
+  useEffect(() => {
+    document.documentElement.style.colorScheme = mode === "system" ? "" : mode;
+  }, [mode]);
+  return (
+    <Theme theme={neutralTheme} mode={mode}>
+      {children}
+    </Theme>
+  );
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Theme theme={neutralTheme} mode={mode}>
+    <Themed>
       <Localized>
         <App />
       </Localized>
-    </Theme>
+    </Themed>
   </StrictMode>,
 );
 

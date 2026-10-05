@@ -57,3 +57,29 @@ body {
 .selectable {
   user-select: text;
 }
+
+/* Every scroll area gets the platform's own scrollbar, as the webview draws it,
+   instead of the neutral-colored one some components set. */
+* {
+  scrollbar-color: auto !important;
+}
+
+/* The window has no title bar: the top of the sidebar and the page headers
+   move the window, and keep clear of the window controls drawn over the page
+   (--mygo-titlebar-*, unset in a browser). */
+.drag,
+.titlebar {
+  --app-region: drag;
+}
+
+.titlebar {
+  min-height: var(--mygo-titlebar-height, 0px);
+  padding-right: var(--mygo-titlebar-inset-right, 0px);
+}
+
+/* Controls on the left (the traffic lights of macOS, or a GTK layout that puts
+   them there) sit over the sidebar: its content starts below them. The
+   multiplication turns any room on the left into the full title bar height. */
+.sidenav-top {
+  padding-top: min(var(--mygo-titlebar-height, 0px), calc(var(--mygo-titlebar-inset-left, 0px) * 100));
+}

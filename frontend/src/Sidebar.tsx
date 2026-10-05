@@ -58,7 +58,11 @@ export function Sidebar({ state, route, actions, onAdd }: { state: State; route:
     route.page === "messages" && route.serverId === serverId && route.appId === appId;
   return (
     <SideNav
-      header={<SideNavHeading heading="Gotify" subheading="Desktop" icon={<NavIcon icon={<Icon icon={BellIcon} size="sm" />} />} />}
+      header={
+        <div className="sidenav-top drag">
+          <SideNavHeading heading="Gotify" subheading="Desktop" icon={<NavIcon icon={<Icon icon={BellIcon} size="sm" />} />} />
+        </div>
+      }
       footer={
         <SideNavSection title={t.appName} isHeaderHidden>
           <SideNavItem label={t.addServer} icon={PlusIcon} onClick={onAdd} />

@@ -224,6 +224,19 @@ func TestSettingsKeepHiddenFieldsAndDropStaleWrites(t *testing.T) {
 	}
 }
 
+func TestSettingsTheme(t *testing.T) {
+	f := NewFakeBackend()
+	_, d := start(t, f, Platform{})
+	for i, c := range []struct{ in, want Theme }{{ThemeDark, ThemeDark}, {ThemeLight, ThemeLight}, {"purple", ThemeSystem}} {
+		if err := d.SetSettings(uint64(i+1), Settings{Theme: c.in}); err != nil {
+			t.Fatal(err)
+		}
+		if got := d.State().Settings.Theme; got != c.want {
+			t.Errorf("theme %q: got %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestOpenURLAllowsOnlyWebAndMail(t *testing.T) {
 	var opened []string
 	_, d := start(t, NewFakeBackend(), Platform{OpenURL: func(u string) { opened = append(opened, u) }})

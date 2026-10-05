@@ -19,7 +19,7 @@ import { errorText, findServer, go, refreshState, useAppState, useRoute } from "
 function Welcome({ onAdd }: { onAdd(): void }) {
   const t = useT();
   return (
-    <Center height="100%">
+    <Center height="100%" className="drag">
       <EmptyState
         icon={<BellRingIcon size={48} />}
         title={t.welcomeTitle}

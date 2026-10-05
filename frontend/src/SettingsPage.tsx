@@ -9,7 +9,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { TimeInput, type ISOTimeString } from "@astryxdesign/core/TimeInput";
 import type { ReactNode } from "react";
 import { useLang, useT } from "./i18n";
-import { Desktop, type Language, type State } from "./mygo";
+import { Desktop, type Language, type State, type Theme } from "./mygo";
 import { errorText, refreshState, useNow, useSettings } from "./store";
 
 const toTime = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}` as ISOTimeString;
@@ -51,7 +51,7 @@ export function SettingsPage({ state, onError, onInfo }: { state: State; onError
       contentWidth={680}
       padding={5}
       header={
-        <LayoutHeader hasDivider>
+        <LayoutHeader hasDivider className="titlebar">
           <Heading level={1}>{t.settings}</Heading>
         </LayoutHeader>
       }
@@ -69,6 +69,17 @@ export function SettingsPage({ state, onError, onInfo }: { state: State; onError
                 value={s.language || "system"}
                 width={240}
                 onChange={(v) => update({ language: (v === "system" ? "" : v) as Language })}
+              />
+              <Selector
+                label={t.appearance}
+                options={[
+                  { value: "system", label: t.appearanceSystem },
+                  { value: "light", label: t.appearanceLight },
+                  { value: "dark", label: t.appearanceDark },
+                ]}
+                value={s.theme || "system"}
+                width={240}
+                onChange={(v) => update({ theme: (v === "system" ? "" : v) as Theme })}
               />
               <Switch
                 label={t.startAtLogin}

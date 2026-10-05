@@ -123,6 +123,8 @@ export interface Settings {
   highBypassesDnd: boolean;
   /** Language is the language the user chose; "" follows the system. */
   language: Language;
+  /** Theme is the appearance the user chose; "" follows the system. */
+  theme: Theme;
 }
 
 /** State is everything the page shows besides messages. */
@@ -142,6 +144,9 @@ export interface State {
   dataDir: string;
   openAtLogin: boolean;
 }
+
+/** Theme is a light or dark appearance, or "" for the system's. */
+export type Theme = "" | "light" | "dark";
 
 // ---- Services ----
 
