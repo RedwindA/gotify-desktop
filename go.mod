@@ -9,13 +9,11 @@ require (
 	github.com/egoist/mygo v0.2.9
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/yuin/goldmark v1.8.6
-	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.59.0
 )
 
 require (
-	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect

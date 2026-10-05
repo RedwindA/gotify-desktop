@@ -21,7 +21,7 @@ The web UI that ships with gotify/server is good for managing a server. It is no
   - burst summaries: more than 3 messages from one app within 10 seconds become one notification, and a catch-up of more than 3 messages becomes one "missed" summary;
   - big images and click URLs from the message extras.
 - **Several servers at once.** The web UI logs in to one server; here every server has its own connection and they share one message list.
-- **Local history and tokens in the keyring.** Messages are kept in a local SQLite database, so history stays readable while a server is down. Client tokens live in the OS keyring, not in browser storage.
+- **Local history.** Messages are kept in a local SQLite database, so history stays readable while a server is down. Client tokens are kept in plain text in `tokens.json` next to it, readable only by your user account: anyone who can read that file can act as your Gotify user.
 - **A desktop window.** Markdown message bodies, images viewed in the app, light and dark themes, English and Simplified Chinese, and a message list that stays fast with many messages.
 
 What the web UI still does better: it needs no install, works from any device with a browser, and manages the server: applications, clients, users and plugins. Gotify Desktop only receives messages, so keep using the web UI for those.

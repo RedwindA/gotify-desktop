@@ -14,7 +14,7 @@ a React frontend in `frontend/` built with the Astryx design system (`@astryxdes
 
 - `internal/gotify`: REST + websocket client (`X-Gotify-Key` auth, sub-path aware base URL).
 - `internal/store`: SQLite (modernc, WAL) with versioned migrations; `SaveMessages` is the dedup point.
-- `internal/secret`: client tokens in the OS keyring (`Tokens` interface, `Memory` for tests).
+- `internal/secret`: client tokens in `tokens.json` (mode 0600) in the data dir, not the OS keyring: unsigned macOS builds would be asked for keychain access after every update (`Tokens` interface, `Memory` for tests).
 - `internal/conn`: per-server supervisor (dial, REST catch-up, ping/pong liveness, backoff, auth failure).
 - `internal/notify`: native notifications (Windows toasts, macOS UNUserNotificationCenter, Linux D-Bus), policy and dispatcher.
 - `internal/app`: the controller (servers, supervisors, store, notifications) with no UI.
@@ -31,7 +31,7 @@ go test ./...
 cd frontend && bun install && bun run typecheck && bun run build   # the page, into frontend/dist
 go run github.com/egoist/mygo/cmd/mygo generate                     # after changing internal/api
 go run github.com/egoist/mygo/cmd/mygo dev                          # the app with the Vite dev server
-GOTIFY_DEMO=1 go run github.com/egoist/mygo/cmd/mygo dev            # the same over demo data: no data dir, keyring or network
+GOTIFY_DEMO=1 go run github.com/egoist/mygo/cmd/mygo dev            # the same over demo data: no data dir or network
 CGO_ENABLED=0 GOOS=windows go build ./... && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./... && CGO_ENABLED=0 GOOS=linux go build ./...
 
 # Integration tests: builds the gotify server from $GOTIFY_SERVER_SRC (default /home/austin/server)

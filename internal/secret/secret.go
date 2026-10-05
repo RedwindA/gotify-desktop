@@ -1,44 +1,16 @@
 package secret
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
-	"time"
-
-	"github.com/zalando/go-keyring"
 )
 
-const service = "gotify-desktop"
-
 var ErrNotFound = errors.New("secret: not found")
-
-// ErrUnavailable is returned when the OS credential store does not answer in
-// time, as a Secret Service that D-Bus cannot start never does.
-var ErrUnavailable = errors.New("the system keyring did not answer")
-
-// timeout bounds every call to the OS credential store.
-var timeout = 15 * time.Second
-
-// bounded runs f, giving up after timeout. A call that never returns keeps its goroutine.
-func bounded[T any](f func() (T, error)) (T, error) {
-	type result struct {
-		v   T
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		v, err := f()
-		ch <- result{v, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.v, r.err
-	case <-time.After(timeout):
-		var zero T
-		return zero, ErrUnavailable
-	}
-}
 
 type Tokens interface {
 	Get(serverID int64) (string, error)
@@ -46,32 +18,100 @@ type Tokens interface {
 	Delete(serverID int64) error
 }
 
-type keyringTokens struct{}
+// File stores tokens in a JSON file only its owner can read. The OS keyring
+// is not used: unsigned builds change their code signature on every update,
+// and macOS then asks again for access to the keychain.
+type File struct {
+	path string
+	mu   sync.Mutex
+}
 
-// Keyring stores tokens in the OS credential store.
-func Keyring() Tokens { return keyringTokens{} }
+// NewFile stores tokens in path, which need not exist yet.
+func NewFile(path string) *File { return &File{path: path} }
 
-func user(id int64) string { return fmt.Sprintf("server-%d", id) }
+func (f *File) load() (map[string]string, error) {
+	m := map[string]string{}
+	b, err := os.ReadFile(f.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return m, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Base(f.path), err)
+	}
+	return m, nil
+}
 
-func (keyringTokens) Get(id int64) (string, error) {
-	v, err := bounded(func() (string, error) { return keyring.Get(service, user(id)) })
-	if errors.Is(err, keyring.ErrNotFound) {
+// save replaces the file through a rename, so a crash leaves the old one.
+func (f *File) save(m map[string]string) error {
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(f.path), filepath.Base(f.path)+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), f.path)
+}
+
+func key(id int64) string { return strconv.FormatInt(id, 10) }
+
+func (f *File) Get(id int64) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, err := f.load()
+	if err != nil {
+		return "", err
+	}
+	v, ok := m[key(id)]
+	if !ok {
 		return "", ErrNotFound
 	}
-	return v, err
+	return v, nil
 }
 
-func (keyringTokens) Set(id int64, token string) error {
-	_, err := bounded(func() (struct{}, error) { return struct{}{}, keyring.Set(service, user(id), token) })
-	return err
+func (f *File) Set(id int64, token string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, err := f.load()
+	if err != nil {
+		return err
+	}
+	m[key(id)] = token
+	return f.save(m)
 }
 
-func (keyringTokens) Delete(id int64) error {
-	_, err := bounded(func() (struct{}, error) { return struct{}{}, keyring.Delete(service, user(id)) })
-	if errors.Is(err, keyring.ErrNotFound) {
+func (f *File) Delete(id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, err := f.load()
+	if err != nil {
+		return err
+	}
+	if _, ok := m[key(id)]; !ok {
 		return nil
 	}
-	return err
+	delete(m, key(id))
+	return f.save(m)
 }
 
 type Memory struct {

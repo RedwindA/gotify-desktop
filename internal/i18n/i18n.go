@@ -97,7 +97,7 @@ var chinese = map[string]string{
 	"This does not look like a Gotify server.":                                                  "这看起来不是 Gotify 服务器。",
 	"This server was added as %s. Remove it and add it again to use another account.":           "此服务器是以 %s 的身份添加的。要使用其他账号，请移除后重新添加。",
 	"Couldn't store the token: %v":                                                              "无法保存令牌：%v",
-	"Can't read the token from the system keyring: %v":                                          "无法从系统密钥环读取令牌：%v",
+	"Can't read the token: %v":                                                                  "无法读取令牌：%v",
 	"Enter the server's address.":                                                               "请输入服务器地址。",
 	"This is not a valid address.":                                                              "这不是有效的地址。",
 	"Enter your username and password.":                                                         "请输入用户名和密码。",

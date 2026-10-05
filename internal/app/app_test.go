@@ -92,7 +92,7 @@ func TestMissingTokenNeedsLogin(t *testing.T) {
 	}
 }
 
-// stuckTokens is a keyring that does not answer until released, then fails.
+// stuckTokens is a token store that does not answer until released, then fails.
 type stuckTokens struct {
 	secret.Memory
 	release chan struct{}
@@ -100,10 +100,10 @@ type stuckTokens struct {
 
 func (s *stuckTokens) Get(int64) (string, error) {
 	<-s.release
-	return "", secret.ErrUnavailable
+	return "", errors.New("tokens.json: unexpected end of JSON input")
 }
 
-func TestStartupDoesNotWaitForTheKeyring(t *testing.T) {
+func TestStartupDoesNotWaitForTheTokens(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := store.Open(dir + "/gotify.db")
 	id, _ := st.AddServer(store.Server{Name: "x", URL: "http://127.0.0.1:1"})
@@ -122,20 +122,20 @@ func TestStartupDoesNotWaitForTheKeyring(t *testing.T) {
 	select {
 	case a = <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("New waited for the keyring")
+		t.Fatal("New waited for the tokens")
 	}
 	defer a.Close()
 	if sv, _ := a.Snapshot().Server(id); sv.State != conn.Connecting {
-		t.Fatalf("while the keyring is silent: %+v", sv)
+		t.Fatalf("while the token store is silent: %+v", sv)
 	}
 	close(tokens.release)
-	eventually(t, "the keyring error", func() bool {
+	eventually(t, "the token error", func() bool {
 		sv, _ := a.Snapshot().Server(id)
 		return sv.State == conn.Disconnected
 	})
 	sv, _ := a.Snapshot().Server(id)
-	if sv.NeedLogin || !strings.Contains(sv.Err, "keyring") {
-		t.Fatalf("a keyring that fails is not a wrong password: %+v", sv)
+	if sv.NeedLogin || !strings.Contains(sv.Err, "tokens.json") {
+		t.Fatalf("a token store that fails is not a wrong password: %+v", sv)
 	}
 	if changes.Load() == 0 {
 		t.Fatal("the change was not reported")

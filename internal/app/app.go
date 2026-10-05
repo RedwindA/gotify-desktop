@@ -176,8 +176,8 @@ func (a *App) clientFor(sv store.Server, token string) (*gotify.Client, error) {
 	return gotify.New(sv.URL, token, gotify.Options{InsecureSkipVerify: sv.InsecureSkipVerify, CACertPEM: []byte(sv.CACertPEM)})
 }
 
-// startServer adds a server's runtime and connects it in the background: its
-// token comes from the OS keyring, which may be slow to answer or never answer.
+// startServer adds a server's runtime and connects it in the background, after
+// reading its token.
 func (a *App) startServer(sv store.Server) {
 	rt := &runtime{sv: sv, state: conn.Connecting}
 	a.mu.Lock()
@@ -202,7 +202,7 @@ func (a *App) connect(id int64, rt *runtime) {
 	case errors.Is(err, secret.ErrNotFound), err == nil && token == "":
 		rt.noToken, rt.state, rt.err = true, conn.AuthFailed, gotify.ErrUnauthorized
 	case err != nil:
-		rt.state, rt.err = conn.Disconnected, errors.New(i18n.T("Can't read the token from the system keyring: %v", err))
+		rt.state, rt.err = conn.Disconnected, errors.New(i18n.T("Can't read the token: %v", err))
 	default:
 		if client, cerr := a.clientFor(rt.sv, token); cerr != nil {
 			rt.state, rt.err = conn.Disconnected, cerr

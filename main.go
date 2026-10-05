@@ -105,7 +105,7 @@ type controller interface {
 }
 
 // demoController serves made-up servers and messages from memory, with
-// GOTIFY_DEMO=1: no data, keyring or network, for working on the page. Its
+// GOTIFY_DEMO=1: no data or network, for working on the page. Its
 // test notification is real, and clicking a notification shows its message.
 type demoController struct {
 	*api.FakeBackend
@@ -179,7 +179,7 @@ func (d *desktop) start() {
 		d.ctrl = d.demo()
 	} else {
 		d.ctrl, err = app.New(app.Options{
-			DataDir: dataDir, CacheDir: cacheDir, Tokens: secret.Keyring(), Notifier: d.notifier,
+			DataDir: dataDir, CacheDir: cacheDir, Tokens: secret.NewFile(filepath.Join(dataDir, "tokens.json")), Notifier: d.notifier,
 			OnChange: d.onChange,
 		})
 	}
