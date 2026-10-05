@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,24 +75,31 @@ func TestAppImageIsADataURL(t *testing.T) {
 
 func TestMessageImage(t *testing.T) {
 	f := Demo("")
-	_, d := start(t, f, Platform{})
+	c, d := start(t, f, Platform{ImageBase: "msgimg://localhost/"})
 	page, _ := d.Messages(Query{ServerID: 1, AppID: 3})
-	if len(page.Messages) != 1 || page.Messages[0].ImageURL != demoSnapshotURL {
-		t.Fatalf("the image URL is not in the message: %+v", page.Messages)
+	if len(page.Messages) != 1 || page.Messages[0].ImageURL != demoSnapshotURL || page.Messages[0].ImageSrc != "msgimg://localhost/1/8" {
+		t.Fatalf("the image URLs are not in the message: %+v", page.Messages)
 	}
-	ctx := context.Background()
-	if img, err := d.MessageImage(ctx, 1, 8); err != nil || !strings.HasPrefix(img, "data:image/png;base64,") {
-		t.Errorf("image: %.40q, %v", img, err)
+	if other, _ := d.Messages(Query{ServerID: 1, AppID: 1}); other.Messages[0].ImageSrc != "" {
+		t.Errorf("a message without an image has a source: %+v", other.Messages[0])
 	}
-	if img, err := d.MessageImage(ctx, 1, 9); img != "" || err != nil {
-		t.Errorf("a message without an image: %q, %v", img, err)
+	h := c.ImageHandler()
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "msgimg://localhost"+path, nil))
+		return rec
 	}
-	if img, err := d.MessageImage(ctx, 2, 8); img != "" || err != nil {
-		t.Errorf("a message of another server: %q, %v", img, err)
+	if rec := get("/1/8"); rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || rec.Body.Len() == 0 {
+		t.Errorf("image: %d %q, %d bytes", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Len())
+	}
+	for _, path := range []string{"/1/9", "/2/8", "/1", "/x/8", "/"} {
+		if rec := get(path); rec.Code != 404 {
+			t.Errorf("%s: %d", path, rec.Code)
+		}
 	}
 	delete(f.Images, demoSnapshotURL)
-	if _, err := d.MessageImage(ctx, 1, 8); err == nil {
-		t.Error("a failed download succeeded")
+	if rec := get("/1/8"); rec.Code != 502 {
+		t.Errorf("a failed download: %d", rec.Code)
 	}
 }
 

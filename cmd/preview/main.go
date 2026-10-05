@@ -21,6 +21,7 @@ import (
 	"path"
 	"reflect"
 	"strings"
+	"time"
 	"sync"
 
 	"encoding/json/jsontext"
@@ -197,6 +198,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:5174", "address to listen on")
 	dist := flag.String("dist", "frontend/dist", "the built frontend")
 	empty := flag.Bool("empty", false, "start without servers")
+	older := flag.Int("older", 0, "adds this many older messages, copies of the demo's, for a long list")
 	lang := flag.String("lang", "en", "the system language the demo follows, such as zh-CN")
 	flag.Parse()
 	i18n.SetSystem(*lang)
@@ -210,6 +212,12 @@ func main() {
 	if *empty {
 		be = api.NewFakeBackend()
 	}
+	for i, demo := 0, len(be.Msgs); demo > 0 && i < *older; i++ {
+		m := be.Msgs[i%demo]
+		m.ID, m.Read, m.Date = uint(1000+i), true, time.Now().Add(-time.Duration(72+i)*time.Hour)
+		be.Msgs = append(be.Msgs, m)
+	}
+	be.Refresh()
 	ev := &events{subs: map[chan []byte]bool{}}
 	ctrl := api.New(api.Platform{
 		Version: "0.1.0",
@@ -217,6 +225,7 @@ func main() {
 		PickCA: func(context.Context) (string, []byte, error) {
 			return "", nil, nil
 		},
+		ImageBase: base + "/msgimg/",
 	})
 	ctrl.Redirect(func(s api.State) { ev.send("state", s) }, func(n api.Navigation) { ev.send("navigate", n) })
 	ctrl.Start(be, "~/.config/Gotify Desktop")
@@ -229,6 +238,7 @@ func main() {
 		w.Header().Set("Content-Type", "text/javascript")
 		io.WriteString(w, shim)
 	})
+	mux.Handle("GET /msgimg/", http.StripPrefix("/msgimg", ctrl.ImageHandler()))
 	mux.HandleFunc("GET /chart.png", func(w http.ResponseWriter, r *http.Request) { w.Write(api.DemoChart()) })
 	mux.Handle("GET /", spa(os.DirFS(*dist)))
 	fmt.Println(base)

@@ -14,7 +14,6 @@ import { memo, useState, type ReactNode } from "react";
 import { Desktop, type App, type Message } from "./mygo";
 import { useT } from "./i18n";
 import { AppAvatar } from "./Sidebar";
-import { useMessageImage } from "./store";
 
 const urlPattern = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g;
 
@@ -50,12 +49,26 @@ function PlainBody({ text }: { text: string }) {
   );
 }
 
-/** The image a message shows below its body; clicking it opens the viewer. */
-function MessageImage({ msg, onView }: { msg: Message; onView(src: string): void }) {
-  const src = useMessageImage(msg.serverId, msg.id, msg.imageUrl);
-  if (src === "") return null;
-  if (src === undefined) return <div className="msg-image msg-image-loading" aria-busy="true" />;
-  return <img className="msg-image" src={src} alt="" onClick={() => onView(src)} />;
+/**
+ * The image a message shows below its body, which Go serves; clicking it opens
+ * the viewer. It holds the room of a placeholder until it loaded, and goes
+ * away when it fails.
+ */
+function MessageImage({ src, onView }: { src: string; onView(src: string): void }) {
+  const [state, setState] = useState<"loading" | "loaded" | "failed">("loading");
+  if (state === "failed") return null;
+  return (
+    <img
+      className={"msg-image" + (state === "loading" ? " msg-image-loading" : "")}
+      src={src}
+      alt=""
+      decoding="async"
+      aria-busy={state === "loading" || undefined}
+      onLoad={() => setState("loaded")}
+      onError={() => setState("failed")}
+      onClick={() => state === "loaded" && onView(src)}
+    />
+  );
 }
 
 export interface MessageCardProps {
@@ -126,7 +139,7 @@ export const MessageCard = memo(function MessageCard({ msg, app, serverName, hig
                 ) : (
                   <PlainBody text={msg.body} />
                 ))}
-              {msg.imageUrl && !(msg.markdown && msg.body.includes(msg.imageUrl)) && <MessageImage msg={msg} onView={setViewing} />}
+              {msg.imageSrc && !(msg.markdown && msg.body.includes(msg.imageUrl)) && <MessageImage src={msg.imageSrc} onView={setViewing} />}
               {msg.clickUrl && (
                 <HStack>
                   <Button label={t.openLink} size="sm" icon={<ExternalLinkIcon size={14} />} tooltip={msg.clickUrl} onClick={() => openLink(msg.clickUrl)} />

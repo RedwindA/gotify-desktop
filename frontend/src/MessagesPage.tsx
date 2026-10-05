@@ -9,7 +9,8 @@ import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { CheckCheckIcon, InboxIcon, SearchIcon, SearchXIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MessageCard } from "./MessageCard";
 import { Desktop, type Message, type MessagePage, type Server, type State } from "./mygo";
 import { useT } from "./i18n";
@@ -18,6 +19,13 @@ import { clearNavTarget, errorText, findServer, useNavTarget, useNow } from "./s
 
 const pageSize = 100;
 const markReadDelay = 1200;
+// The list renders the cards on screen and a few around them only, so that
+// the page's memory does not grow with the messages it went through.
+const cardGap = 12; // --spacing-3
+const estimatedCardHeight = 140;
+const cardOverscan = 4;
+// The next page loads when the cards rendered reach this close to the end.
+const loadMoreAhead = 10;
 
 const keyOf = (m: { serverId: number; id: number }) => `${m.serverId}/${m.id}`;
 
@@ -44,9 +52,10 @@ function useViewportHeight(): number {
 /**
  * Marks an unread message read once its card stayed on screen for a moment in
  * a focused window. A card counts as on screen once any of it reaches the
- * upper three quarters of the window, however tall it is.
+ * upper three quarters of the window, however tall it is. shown names the
+ * cards rendered, which change as the list scrolls.
  */
-function useMarkVisibleRead(list: HTMLElement | null, messages: Message[]) {
+function useMarkVisibleRead(list: HTMLElement | null, messages: Message[], shown: string) {
   const latest = useRef(messages);
   latest.current = messages;
   const observer = useRef<IntersectionObserver | null>(null);
@@ -117,7 +126,7 @@ function useMarkVisibleRead(list: HTMLElement | null, messages: Message[]) {
       observed.current.add(el);
       observer.current?.observe(el);
     }
-  }, [list, messages]);
+  }, [list, messages, shown]);
 }
 
 function ServerBanners({ servers, onRelogin }: { servers: Server[]; onRelogin(sv: Server): void }) {
@@ -164,8 +173,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
   const [highlight, setHighlight] = useState("");
   const [scrollTo, setScrollTo] = useState("");
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [list, setList] = useState<HTMLElement | null>(null);
-  const sentinel = useRef<HTMLDivElement>(null);
+  const [listTop, setListTop] = useState(0);
   const shownQuery = useRef(query);
   const nav = useNavTarget();
   const target = nav && nav.serverId !== 0 && (serverId === 0 || nav.serverId === serverId) ? nav : null;
@@ -177,10 +187,10 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       shownQuery.current = search;
       setQuery(search);
       setLimit(pageSize);
-      list?.scrollIntoView({ block: "start" });
+      scroller?.scrollTo({ top: 0 });
     }, 200);
     return () => clearTimeout(t);
-  }, [search, list]);
+  }, [search, scroller]);
 
   // A notification's message shows whatever the search was.
   useEffect(() => {
@@ -215,29 +225,51 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     };
   }, [serverId, appId, query, limit, state.msgGen, target, onError, t]);
 
+  const messages = page?.messages ?? [];
+  // Where the list starts in the scrolled content, below the banners.
+  useLayoutEffect(() => {
+    if (!list || !scroller) return;
+    const top = list.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    if (top !== listTop) setListTop(top);
+  });
+  // Messages that arrive or go above the card read keep it where it is on
+  // screen, as the browser did for cards in the flow (the virtualizer anchors
+  // to a card when anchoring to the end); at the top, new messages show.
+  const keepReading = (scroller?.scrollTop ?? 0) > 0;
+  const getItemKey = useCallback((i: number) => keyOf(messages[i]!), [messages]);
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scroller,
+    estimateSize: () => estimatedCardHeight,
+    getItemKey,
+    overscan: cardOverscan,
+    gap: cardGap,
+    scrollMargin: listTop,
+    anchorTo: keepReading ? "end" : "start",
+  });
+  const rows = virtualizer.getVirtualItems();
+
   useEffect(() => {
-    if (!scrollTo || !list || !page?.messages.some((m) => keyOf(m) === scrollTo)) return;
-    list.querySelector(`[data-key="${scrollTo}"]`)?.scrollIntoView({ block: "center" });
+    const i = scrollTo ? messages.findIndex((m) => keyOf(m) === scrollTo) : -1;
+    if (i < 0 || !list) return;
+    virtualizer.scrollToIndex(i, { align: "center" });
     setScrollTo("");
-  }, [scrollTo, page, list]);
+  }, [scrollTo, messages, list, virtualizer]);
   useEffect(() => {
     if (!highlight) return;
     const t = setTimeout(() => setHighlight(""), 4000);
     return () => clearTimeout(t);
   }, [highlight]);
 
-  // Loads more when the end of the list shows.
+  // Loads more when the end of the list comes near.
   const hasMore = page?.hasMore ?? false;
-  const count = page?.messages.length ?? 0;
+  const count = messages.length;
+  const lastShown = rows.at(-1)?.index ?? -1;
   useEffect(() => {
-    const el = sentinel.current;
-    if (!el || !hasMore) return;
-    const io = new IntersectionObserver((e) => e[0]?.isIntersecting && setLimit(count + pageSize), { rootMargin: "600px" });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [hasMore, count]);
+    if (hasMore && lastShown >= count - loadMoreAhead) setLimit(count + pageSize);
+  }, [hasMore, lastShown, count]);
 
-  useMarkVisibleRead(list, page?.messages ?? []);
+  useMarkVisibleRead(list, messages, rows.map((r) => r.key).join());
 
   const onDelete = useCallback(
     (m: Message) => {
@@ -303,8 +335,8 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
         </LayoutHeader>
       }
       content={
-        <LayoutContent>
-          <VStack gap={3} ref={setList}>
+        <LayoutContent ref={setScroller}>
+          <VStack gap={3}>
             <ServerBanners servers={scoped} onRelogin={onRelogin} />
             {page === null ? (
               <HStack hAlign="center" padding={10}>
@@ -317,23 +349,31 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                 <EmptyState icon={<InboxIcon size={40} />} title={t.noMessagesTitle} description={t.noMessagesText} />
               )
             ) : (
-              page.messages.map((m) => {
-                const sv = findServer(state, m.serverId);
-                const k = keyOf(m);
-                return (
-                  <MessageCard
-                    key={k}
-                    msg={m}
-                    app={sv?.apps.find((a) => a.id === m.appId)}
-                    serverName={state.servers.length > 1 && serverId === 0 ? sv?.name : undefined}
-                    highlighted={highlight === k}
-                    deleting={deleting.has(k)}
-                    onDelete={onDelete}
-                  />
-                );
-              })
+              <div ref={setList} className="msg-list" style={{ height: virtualizer.getTotalSize() }}>
+                {rows.map((r) => {
+                  const m = messages[r.index]!;
+                  const sv = findServer(state, m.serverId);
+                  const k = keyOf(m);
+                  return (
+                    <div
+                      key={r.key}
+                      data-index={r.index}
+                      ref={virtualizer.measureElement}
+                      className="msg-row"
+                      style={{ transform: `translateY(${r.start - listTop}px)` }}>
+                      <MessageCard
+                        msg={m}
+                        app={sv?.apps.find((a) => a.id === m.appId)}
+                        serverName={state.servers.length > 1 && serverId === 0 ? sv?.name : undefined}
+                        highlighted={highlight === k}
+                        deleting={deleting.has(k)}
+                        onDelete={onDelete}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             )}
-            <div ref={sentinel} />
             {hasMore && (
               <HStack hAlign="center" padding={4}>
                 <Spinner />

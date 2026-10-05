@@ -108,7 +108,7 @@ body {
   height: calc(100% - var(--mygo-titlebar-height, 0px)) !important;
 }
 
-.msg-image-loading {
+.msg-image.msg-image-loading {
   width: 240px;
   height: 135px;
   background: var(--color-background-muted, rgb(128 128 128 / 12%));
@@ -132,4 +132,18 @@ body {
 
 .welcome {
   position: relative;
+}
+
+/* The message list renders the cards near the screen only (MessagesPage),
+   each placed at its offset in a box as tall as all of them. */
+.msg-list {
+  position: relative;
+  width: 100%;
+}
+
+.msg-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }

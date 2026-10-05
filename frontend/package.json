@@ -12,6 +12,7 @@
     "@astryxdesign/core": "0.6.3",
     "@astryxdesign/theme-neutral": "0.6.3",
     "@stylexjs/stylex": "0.19.1",
+    "@tanstack/react-virtual": "3.14.13",
     "lucide-react": "1.48.0",
     "mygo-runtime": "0.2.9",
     "react": "19.3.0",

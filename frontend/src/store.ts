@@ -166,42 +166,6 @@ export function useAppImage(serverId: number, appId: number, imageKey: string): 
   return imageKey && src?.key === key && src.url ? src.url : undefined;
 }
 
-// Message images are downloaded by Go and kept as data URLs, the most recent
-// few only: they can be megabytes each. A failed download is tried again the
-// next time the message shows.
-const messageImages = new Map<string, Promise<string>>();
-const keptMessageImages = 40;
-
-/** The image of a message: undefined while it loads, "" when it failed. */
-export function useMessageImage(serverId: number, id: number, imageUrl: string): string | undefined {
-  const key = `${serverId}/${id}/${imageUrl}`;
-  const [src, setSrc] = useState<{ key: string; url: string }>();
-  useEffect(() => {
-    if (!imageUrl) return;
-    let p = messageImages.get(key);
-    if (p) {
-      messageImages.delete(key); // to the newest end
-    } else {
-      p = Desktop.messageImage(serverId, id).catch((err) => {
-        console.warn("message image:", err);
-        messageImages.delete(key);
-        return "";
-      });
-    }
-    messageImages.set(key, p);
-    for (const old of messageImages.keys()) {
-      if (messageImages.size <= keptMessageImages) break;
-      messageImages.delete(old);
-    }
-    let live = true;
-    void p.then((url) => live && setSrc({ key, url }));
-    return () => {
-      live = false;
-    };
-  }, [key, serverId, id, imageUrl]);
-  return src?.key === key ? src.url : undefined;
-}
-
 // Settings edits show at once and save right away, numbered from an epoch Go
 // gives this page, so that Go keeps the newest edit whatever order the saves
 // arrive in, and a page loaded later wins. The draft shows until Go's state

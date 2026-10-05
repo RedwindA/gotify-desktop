@@ -7,8 +7,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +53,9 @@ type Platform struct {
 	PickCA   func(ctx context.Context) (name string, data []byte, err error)
 	OpenURL  func(url string)
 	CopyText func(text string)
+	// ImageBase is the URL under which the desktop serves ImageHandler, ending
+	// in a slash; the page loads the images of messages from there.
+	ImageBase string
 }
 
 // StateChanged carries the new state after every change.
@@ -186,8 +191,10 @@ type Message struct {
 	Read     bool      `json:"read"`
 	// ClickURL is where clicking the message's notification leads.
 	ClickURL string `json:"clickUrl"`
-	// ImageURL is the image the message shows below its body (MessageImage loads it).
+	// ImageURL is the image the message shows below its body.
 	ImageURL string `json:"imageUrl"`
+	// ImageSrc is where the page loads ImageURL from (ImageHandler), or "" without one.
+	ImageSrc string `json:"imageSrc"`
 }
 
 // MessagePage is a page of messages.
@@ -374,29 +381,54 @@ func (d *Desktop) AppImage(serverID int64, appID uint) string {
 	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(a.Image)
 }
 
-// MessageImage returns the image of a message (Message.ImageURL) as a data
-// URL, or "" when it has none. Go downloads it, so the server's image loads
-// whatever the page's origin allows.
-func (d *Desktop) MessageImage(ctx context.Context, serverID int64, id uint) (string, error) {
+// ImageHandler serves the images of messages (Message.ImageSrc) at
+// <server>/<message>, for the desktop to serve under Platform.ImageBase. Go
+// downloads them, so the server's image loads whatever the page's origin
+// allows, and the webview keeps only the bytes of the images it shows.
+func (c *Controller) ImageHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sid, mid, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		serverID, err1 := strconv.ParseInt(sid, 10, 64)
+		id, err2 := strconv.ParseUint(mid, 10, 0)
+		if !ok || err1 != nil || err2 != nil || !c.started.Load() {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := c.svc.messageImage(r.Context(), serverID, uint(id))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if data == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", http.DetectContentType(data))
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.Write(data)
+	})
+}
+
+// messageImage downloads the image of a message, or returns nil when it has none.
+func (d *Desktop) messageImage(ctx context.Context, serverID int64, id uint) ([]byte, error) {
 	msgs, err := d.be.Messages(store.MessageQuery{ServerID: serverID, ID: id, Limit: 1})
 	if err != nil || len(msgs) == 0 {
-		return "", err
+		return nil, err
 	}
 	u := notify.BigImageURL(msgs[0].Extras)
 	if u == "" {
-		return "", nil
+		return nil, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, imageTimeout)
 	defer cancel()
 	data, err := d.be.FetchImage(ctx, u)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	ct := http.DetectContentType(data)
-	if !strings.HasPrefix(ct, "image/") {
-		return "", errors.New("not an image")
+	if !strings.HasPrefix(http.DetectContentType(data), "image/") {
+		return nil, errors.New("not an image")
 	}
-	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+	return data, nil
 }
 
 // imageTimeout bounds the download of a message's image.
@@ -424,9 +456,14 @@ func (d *Desktop) Messages(q Query) (MessagePage, error) {
 		}
 		page := MessagePage{HasMore: more, MsgGen: gen, Messages: make([]Message, 0, len(msgs))}
 		for _, m := range msgs {
+			img := notify.BigImageURL(m.Extras)
+			src := ""
+			if img != "" {
+				src = fmt.Sprintf("%s%d/%d", d.plat.ImageBase, m.ServerID, m.ID)
+			}
 			page.Messages = append(page.Messages, Message{ServerID: m.ServerID, ID: m.ID, AppID: m.AppID, Title: m.Title,
 				Body: m.Message.Message, Markdown: isMarkdown(m.Extras), Priority: m.Priority, Date: m.Date, Read: m.Read,
-				ClickURL: notify.ClickURL(m.Extras), ImageURL: notify.BigImageURL(m.Extras)})
+				ClickURL: notify.ClickURL(m.Extras), ImageURL: img, ImageSrc: src})
 		}
 		return page, nil
 	}

@@ -61,6 +61,12 @@ func main() {
 		return
 	}
 	d := &desktop{activationLaunch: notify.IsActivationLaunch(os.Args)}
+	// The images of messages come from a scheme of their own, which WebView2
+	// serves under http://<scheme>.localhost.
+	imageBase := imageScheme + "://localhost/"
+	if runtime.GOOS == "windows" {
+		imageBase = "http://" + imageScheme + ".localhost/"
+	}
 	d.api = api.New(api.Platform{
 		Version:        appVersion,
 		OpenAtLogin:    mygo.App.OpenAtLogin,
@@ -68,8 +74,10 @@ func main() {
 		PickCA:         d.pickCA,
 		OpenURL:        func(u string) { mygo.Shell.OpenExternal(u) },
 		CopyText:       mygo.Clipboard.WriteText,
+		ImageBase:      imageBase,
 	})
 	mygo.Bind(d.api.Service())
+	mygo.Protocol.Handle(imageScheme, d.api.ImageHandler())
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
 		if !notify.IsActivationLaunch(args) {
 			d.showWindow()
@@ -87,6 +95,9 @@ func main() {
 		log.Fatal(err)
 	}
 }
+
+// imageScheme serves the images of messages (api.Controller.ImageHandler).
+const imageScheme = "msgimg"
 
 // controller is what the desktop needs of the controller: *app.App, or demoController.
 type controller interface {
