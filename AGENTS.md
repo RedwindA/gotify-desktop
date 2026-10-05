@@ -14,7 +14,12 @@ UI is native, drawn by the `mygo` framework (`github.com/egoist/mygo`, package `
 - `internal/store`: SQLite (modernc, WAL) with versioned migrations; `SaveMessages` is the dedup point.
 - `internal/secret`: client tokens in the OS keyring (`Tokens` interface, `Memory` for tests).
 - `internal/conn`: per-server supervisor (dial, REST catch-up, ping/pong liveness, backoff, auth failure).
-- `internal/itest`: integration tests against the real gotify server.
+- `internal/notify`: native notifications (Windows toasts, macOS UNUserNotificationCenter, Linux D-Bus), policy and dispatcher.
+- `internal/app`: the controller (servers, supervisors, store, notifications) with no UI.
+- `internal/markdown`: message bodies as native UI (parsed once, images cached).
+- `internal/view`: the native UI; `view.Demo` and `FakeBackend` back its tests and screenshots.
+- `internal/itest`: integration tests against the real gotify server (`harness` runs it).
+- `main.go`: window, tray, single instance, power events; `cmd/` has notifytest, screenshots and genicons.
 
 ## Commands
 
@@ -25,5 +30,11 @@ CGO_ENABLED=0 GOOS=windows go build ./... && CGO_ENABLED=0 GOOS=darwin GOARCH=ar
 
 # Integration tests: builds the gotify server from $GOTIFY_SERVER_SRC (default /home/austin/server)
 # with CGO_ENABLED=1 into the user cache dir (harness only), runs it on a random port.
-GOTIFY_IT=1 go test -race -count=1 ./internal/itest
+GOTIFY_IT=1 go test -race -count=1 ./internal/itest ./internal/app
+
+# Packaging and screenshots
+go run ./cmd/genicons                      # resources/icon.svg and the PNGs (mygo's own SVG renderer)
+go run ./cmd/screenshots                   # dist/screenshots/*.png, headless, light and dark
+# Windows/macOS/Linux packages into build/ (macOS signing and .dmg need a Mac; the Windows installer needs makensis)
+go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64,windows/arm64,darwin/universal,linux/amd64 -o build
 ```

@@ -11,12 +11,13 @@ import (
 
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
+	"gotify-desktop/internal/itest/harness"
 	"gotify-desktop/internal/store"
 )
 
 type env struct {
-	srv    *server
-	proxy  *proxy
+	srv    *harness.Server
+	proxy  *harness.Proxy
 	client *gotify.Client
 	id     uint
 	sup    *conn.Supervisor
@@ -27,9 +28,9 @@ type env struct {
 
 func newEnv(t *testing.T, cfg conn.Config) *env {
 	t.Helper()
-	requireIT(t)
-	e := &env{srv: startServer(t)}
-	e.proxy = startProxy(t, e.srv.URL()[len("http://"):])
+	harness.RequireIT(t)
+	e := &env{srv: harness.StartServer(t)}
+	e.proxy = harness.StartProxy(t, e.srv.URL()[len("http://"):])
 	e.client, e.id = login(t, e.proxy.URL())
 	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -62,22 +63,22 @@ func (e *env) waitReady(t *testing.T, from int) int {
 }
 
 func TestLoginAndCurrentUser(t *testing.T) {
-	requireIT(t)
-	srv := startServer(t)
+	harness.RequireIT(t)
+	srv := harness.StartServer(t)
 	ctx := context.Background()
-	tok, id, err := gotify.Login(ctx, srv.URL(), adminUser, adminPass, "desk", gotify.Options{})
+	tok, id, err := gotify.Login(ctx, srv.URL(), harness.AdminUser, harness.AdminPass, "desk", gotify.Options{})
 	if err != nil || tok == "" || id == 0 {
 		t.Fatalf("%q %d %v", tok, id, err)
 	}
 	c, _ := gotify.New(srv.URL(), tok, gotify.Options{})
 	u, err := c.CurrentUser(ctx)
-	if err != nil || u.Name != adminUser || !u.Admin || u.ClientID != id {
+	if err != nil || u.Name != harness.AdminUser || !u.Admin || u.ClientID != id {
 		t.Fatalf("%+v %v", u, err)
 	}
 	if v, err := c.Version(ctx); err != nil || v.Version == "" {
 		t.Fatalf("%+v %v", v, err)
 	}
-	if _, _, err := gotify.Login(ctx, srv.URL(), adminUser, "wrong", "desk", gotify.Options{}); !errors.Is(err, gotify.ErrUnauthorized) {
+	if _, _, err := gotify.Login(ctx, srv.URL(), harness.AdminUser, "wrong", "desk", gotify.Options{}); !errors.Is(err, gotify.ErrUnauthorized) {
 		t.Fatalf("got %v", err)
 	}
 	bad, _ := gotify.New(srv.URL(), "nope", gotify.Options{})
@@ -96,10 +97,10 @@ func TestLoginAndCurrentUser(t *testing.T) {
 
 func TestLiveMessageDeliveredOnce(t *testing.T) {
 	e := newEnv(t, fast())
-	app := e.srv.newApp("live")
+	app := e.srv.NewApp("live")
 	e.sup.Start()
 	n := e.waitReady(t, 0)
-	e.srv.post(app, 1, "live")
+	e.srv.Post(app, 1, "live")
 	ev, n := e.rec.wait(t, n, msgs)
 	if ev.Silent || ev.CatchUp || !reflect.DeepEqual(messageBodies(ev.Messages), []string{"live-1"}) {
 		t.Fatalf("%+v", ev)
@@ -117,14 +118,14 @@ func TestLiveMessageDeliveredOnce(t *testing.T) {
 
 func TestFirstConnectImportsSilently(t *testing.T) {
 	e := newEnv(t, fast())
-	app := e.srv.newApp("hist")
-	e.srv.post(app, 5, "old")
+	app := e.srv.NewApp("hist")
+	e.srv.Post(app, 5, "old")
 	e.sup.Start()
 	ev, n := e.rec.wait(t, 0, msgs)
 	if !ev.Silent || !ev.CatchUp || len(ev.Messages) != 5 || ev.Messages[0].Message != "old-1" || ev.Messages[4].Message != "old-5" {
 		t.Fatalf("%+v", ev)
 	}
-	e.srv.post(app, 1, "new")
+	e.srv.Post(app, 1, "new")
 	ev, _ = e.rec.wait(t, n, msgs)
 	if ev.Silent || len(ev.Messages) != 1 {
 		t.Fatalf("%+v", ev)
@@ -135,10 +136,10 @@ func TestCatchUpAfterServerRestart(t *testing.T) {
 	cfg := fast()
 	cfg.MinBackoff, cfg.MaxBackoff = 200*time.Millisecond, 500*time.Millisecond
 	e := newEnv(t, cfg)
-	app := e.srv.newApp("restart")
+	app := e.srv.NewApp("restart")
 	e.sup.Start()
 	n := e.waitReady(t, 0)
-	e.srv.post(app, 2, "before")
+	e.srv.Post(app, 2, "before")
 	_, n = e.rec.wait(t, n, msgs)
 	if len(e.rec.all()[n-1].Messages) < 1 {
 		t.Fatal("no live message")
@@ -148,9 +149,9 @@ func TestCatchUpAfterServerRestart(t *testing.T) {
 	}
 
 	e.proxy.Refuse(true)
-	e.srv.restart()
+	e.srv.Restart()
 	e.rec.wait(t, n, state(conn.Backoff))
-	e.srv.post(app, 3, "gap")
+	e.srv.Post(app, 3, "gap")
 	e.proxy.Refuse(false)
 	ev, _ := e.rec.wait(t, n, msgs)
 	if !ev.CatchUp || ev.Silent || !reflect.DeepEqual(messageBodies(ev.Messages), []string{"gap-1", "gap-2", "gap-3"}) {
@@ -195,7 +196,7 @@ func TestPingsAcceptedByRealServer(t *testing.T) {
 
 func TestBlackholeDetectedAndCaughtUp(t *testing.T) {
 	e := newEnv(t, fast())
-	app := e.srv.newApp("hole")
+	app := e.srv.NewApp("hole")
 	e.sup.Start()
 	n := e.waitReady(t, 0)
 	e.proxy.Blackhole(true)
@@ -203,7 +204,7 @@ func TestBlackholeDetectedAndCaughtUp(t *testing.T) {
 	if ev.Err == nil {
 		t.Fatal("backoff without error")
 	}
-	e.srv.post(app, 3, "hole")
+	e.srv.Post(app, 3, "hole")
 	e.proxy.Blackhole(false)
 	got, _ := e.rec.wait(t, n, msgs)
 	if !got.CatchUp || !reflect.DeepEqual(messageBodies(got.Messages), []string{"hole-1", "hole-2", "hole-3"}) {
@@ -216,17 +217,17 @@ func TestBlackholeDetectedAndCaughtUp(t *testing.T) {
 
 func TestClientDeletedAuthFailedThenRecovers(t *testing.T) {
 	e := newEnv(t, fast())
-	app := e.srv.newApp("auth")
+	app := e.srv.NewApp("auth")
 	e.sup.Start()
 	n := e.waitReady(t, 0)
-	e.srv.api("DELETE", "/client/"+uitoa(e.id), nil, nil)
+	e.srv.API("DELETE", "/client/"+uitoa(e.id), nil, nil)
 	_, n = e.rec.wait(t, n, state(conn.AuthFailed))
 	accepted := e.proxy.Accepted()
 	time.Sleep(1500 * time.Millisecond)
 	if e.proxy.Accepted() != accepted || e.sup.State() != conn.AuthFailed {
 		t.Fatalf("retrying after auth failure: accepted %d -> %d, state %v", accepted, e.proxy.Accepted(), e.sup.State())
 	}
-	e.srv.post(app, 2, "after")
+	e.srv.Post(app, 2, "after")
 	c, _ := login(t, e.proxy.URL())
 	e.sup.SetClient(c)
 	e.sup.Kick()

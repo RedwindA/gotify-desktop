@@ -212,12 +212,14 @@ func TestBurstSummary(t *testing.T) {
 	if got := push(t0.Add(5*time.Second), 5, 2, 5); len(got) != 1 || got[0].MessageID != 5 {
 		t.Fatalf("other app is independent: %+v", got)
 	}
-	got = push(t0.Add(6*time.Second), 6, 1, 5)
-	if len(got) != 1 || got[0].Title != "5 new messages from Backup" || got[0].Level != LevelHigh {
-		t.Fatalf("summary should keep updating: %+v", got)
+	if got := push(t0.Add(6*time.Second), 6, 1, 5); len(got) != 0 {
+		t.Fatalf("burst key must stay quiet after its summary: %+v", got)
 	}
-	if got := push(t0.Add(30*time.Second), 7, 1, 5); len(got) != 1 || got[0].MessageID != 7 {
-		t.Fatalf("window should expire: %+v", got)
+	if got := push(t0.Add(14*time.Second), 7, 1, 5); len(got) != 0 {
+		t.Fatalf("messages keep the quiet period going: %+v", got)
+	}
+	if got := push(t0.Add(30*time.Second), 8, 1, 5); len(got) != 1 || got[0].MessageID != 8 {
+		t.Fatalf("a quiet window should start fresh: %+v", got)
 	}
 }
 

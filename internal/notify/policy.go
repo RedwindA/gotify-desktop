@@ -35,7 +35,7 @@ type Settings struct {
 }
 
 func DefaultSettings() Settings {
-	return Settings{HighBypassesDND: true, BurstWindow: 10 * time.Second, BurstMax: 3, CatchUpSummaryOver: 3}
+	return Settings{DNDStart: 22 * 60, DNDEnd: 7 * 60, HighBypassesDND: true, BurstWindow: 10 * time.Second, BurstMax: 3, CatchUpSummaryOver: 3}
 }
 
 func (s Settings) withDefaults() Settings {
@@ -102,14 +102,21 @@ type burstEntry struct {
 	level Level
 }
 
-// Planner turns connection events into notifications and remembers recent
-// ones per (server, app) to collapse bursts.
-type Planner struct {
-	mu    sync.Mutex
-	burst map[burstKey][]burstEntry
+type burstState struct {
+	entries    []burstEntry
+	lastAt     time.Time
+	suppressed bool
 }
 
-func NewPlanner() *Planner { return &Planner{burst: map[burstKey][]burstEntry{}} }
+// Planner turns connection events into notifications and remembers recent
+// ones per (server, app) to collapse bursts: once a burst summary is out, the
+// key stays quiet until BurstWindow passes without a new message for it.
+type Planner struct {
+	mu    sync.Mutex
+	burst map[burstKey]*burstState
+}
+
+func NewPlanner() *Planner { return &Planner{burst: map[burstKey]*burstState{}} }
 
 func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]AppPrefs, s Settings, now time.Time) []Planned {
 	if ev.Kind != conn.EventMessages || ev.Silent {
@@ -146,24 +153,34 @@ func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]Ap
 	for _, m := range msgs {
 		level, _ := LevelFor(m.Priority)
 		key := burstKey{ev.ServerID, m.AppID}
-		entries := p.burst[key][:0:0]
-		for _, e := range p.burst[key] {
+		st := p.burst[key]
+		if st == nil {
+			st = &burstState{}
+			p.burst[key] = st
+		}
+		if now.Sub(st.lastAt) >= s.BurstWindow {
+			st.entries, st.suppressed = nil, false
+		}
+		st.lastAt = now
+		kept := st.entries[:0:0]
+		for _, e := range st.entries {
 			if now.Sub(e.at) < s.BurstWindow {
-				entries = append(entries, e)
+				kept = append(kept, e)
 			}
 		}
-		entries = append(entries, burstEntry{now, headline(m, apps), level})
-		p.burst[key] = entries
-		if len(entries) > s.BurstMax {
-			if !containsKey(bursting, key) {
-				bursting = append(bursting, key)
-			}
+		st.entries = append(kept, burstEntry{now, headline(m, apps), level})
+		if st.suppressed {
+			continue
+		}
+		if len(st.entries) > s.BurstMax {
+			st.suppressed = true
+			bursting = append(bursting, key)
 			continue
 		}
 		out = append(out, individual(ev.ServerID, m, level, apps))
 	}
 	for _, key := range bursting {
-		out = append(out, burstSummary(key, p.burst[key], apps))
+		out = append(out, burstSummary(key, p.burst[key].entries, apps))
 	}
 	return out
 }

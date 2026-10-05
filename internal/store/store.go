@@ -61,7 +61,7 @@ CREATE TABLE app_prefs(
 	PRIMARY KEY(server_id, app_id)
 );
 CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-`}
+`, `CREATE INDEX messages_date ON messages(date DESC, id DESC);`}
 
 type Store struct{ db *sql.DB }
 
@@ -321,7 +321,9 @@ type MessageQuery struct {
 	AppID    uint
 	Search   string
 	BeforeID uint
-	Limit    int
+	// ID selects one message.
+	ID    uint
+	Limit int
 }
 
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
@@ -336,6 +338,9 @@ func (s *Store) Messages(q MessageQuery) ([]StoredMessage, error) {
 	if q.AppID != 0 {
 		where, args = append(where, "app_id=?"), append(args, q.AppID)
 	}
+	if q.ID != 0 {
+		where, args = append(where, "id=?"), append(args, q.ID)
+	}
 	if q.BeforeID != 0 {
 		where, args = append(where, "id<?"), append(args, q.BeforeID)
 	}
@@ -347,7 +352,7 @@ func (s *Store) Messages(q MessageQuery) ([]StoredMessage, error) {
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY id DESC, server_id"
+	query += " ORDER BY date DESC, id DESC, server_id"
 	if q.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, q.Limit)
