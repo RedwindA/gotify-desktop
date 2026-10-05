@@ -58,10 +58,36 @@ body {
   user-select: text;
 }
 
-/* Every scroll area gets the platform's own scrollbar, as the webview draws it,
-   instead of the neutral-colored one some components set. */
+/* Scroll areas drop the neutral scrollbar-color some components set, so the
+   ::-webkit-scrollbar rules below apply: Chromium (WebView2) and WebKitGTK
+   would otherwise draw their classic bars with arrow buttons. macOS keeps its
+   own overlay scrollbars. */
 * {
   scrollbar-color: auto !important;
+}
+
+.custom-scrollbars ::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+}
+
+.custom-scrollbars ::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 6px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--color-text-secondary) 45%, transparent);
+}
+
+.custom-scrollbars ::-webkit-scrollbar-thumb:hover,
+.custom-scrollbars ::-webkit-scrollbar-thumb:active {
+  border-width: 3px;
+  background-color: color-mix(in srgb, var(--color-text-secondary) 75%, transparent);
+}
+
+.custom-scrollbars ::-webkit-scrollbar-track,
+.custom-scrollbars ::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* The window has no title bar: the top of the sidebar and the page headers

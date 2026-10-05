@@ -53,10 +53,6 @@ func main() {
 	mygo.App.SetName(appName)
 	mygo.App.SetVersion(appVersion)
 	setupLogging()
-	if runtime.GOOS == "windows" && os.Getenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") == "" {
-		// Windows 11's thin overlay scrollbars instead of Chromium's classic ones.
-		os.Setenv("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--enable-features=msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation")
-	}
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
