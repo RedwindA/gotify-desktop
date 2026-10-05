@@ -48,6 +48,8 @@ export interface Message {
   read: boolean;
   /** ClickURL is where clicking the message's notification leads. */
   clickUrl: string;
+  /** ImageURL is the image the message shows below its body (MessageImage loads it). */
+  imageUrl: string;
 }
 
 /** MessagePage is a page of messages. */
@@ -175,6 +177,14 @@ export const Desktop = {
   /** MarkRead marks messages of a server read. */
   markRead(serverID: number, ids: number[]): Promise<void> {
     return call("Desktop.MarkRead", serverID, ids);
+  },
+  /**
+   * MessageImage returns the image of a message (Message.ImageURL) as a data
+   * URL, or "" when it has none. Go downloads it, so the server's image loads
+   * whatever the page's origin allows.
+   */
+  messageImage(serverID: number, id: number): Promise<string> {
+    return call("Desktop.MessageImage", serverID, id);
   },
   /** Messages returns the newest messages that match q. */
   messages(q: Query): Promise<MessagePage> {

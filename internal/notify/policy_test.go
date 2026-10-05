@@ -131,11 +131,11 @@ func TestIndividualFields(t *testing.T) {
 func TestExtrasURLValidation(t *testing.T) {
 	for _, bad := range []any{"javascript:alert(1)", "file:///etc/passwd", "ftp://x/y", "", "http://", 5, nil} {
 		ex := map[string]any{"client::notification": map[string]any{"bigImageUrl": bad, "click": map[string]any{"url": bad}}}
-		if bigImageURL(ex) != "" || ClickURL(ex) != "" {
+		if BigImageURL(ex) != "" || ClickURL(ex) != "" {
 			t.Errorf("accepted %v", bad)
 		}
 	}
-	if bigImageURL(nil) != "" || ClickURL(nil) != "" {
+	if BigImageURL(nil) != "" || ClickURL(nil) != "" {
 		t.Error("nil extras")
 	}
 	if ClickURL(map[string]any{"client::notification": map[string]any{"click": "bad"}}) != "" {

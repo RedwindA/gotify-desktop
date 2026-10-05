@@ -242,7 +242,7 @@ func individual(serverID int64, m gotify.Message, level Level, apps map[uint]sto
 			Group:   fmt.Sprintf("s%d-a%d", serverID, m.AppID),
 			Level:   level,
 		},
-		ImageURL:  bigImageURL(m.Extras),
+		ImageURL:  BigImageURL(m.Extras),
 		ServerID:  serverID,
 		AppID:     m.AppID,
 		MessageID: m.ID,
@@ -328,7 +328,8 @@ func httpURL(v any) string {
 	return s
 }
 
-func bigImageURL(extras map[string]any) string {
+// BigImageURL returns the http(s) URL of the image a message shows, if any.
+func BigImageURL(extras map[string]any) string {
 	return httpURL(extraMap(extras, "client::notification")["bigImageUrl"])
 }
 

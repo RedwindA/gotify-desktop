@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -228,25 +229,42 @@ func (d *Dispatcher) writeIcon(serverID int64, a store.App) string {
 	return path
 }
 
+// FetchImage downloads the image at url, of at most 5 MB.
+func FetchImage(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+		return nil, fmt.Errorf("not an image: %q", ct)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	switch {
+	case err != nil:
+		return nil, err
+	case len(data) == 0:
+		return nil, errors.New("empty image")
+	case len(data) > maxImageBytes:
+		return nil, errors.New("image larger than 5 MB")
+	}
+	return data, nil
+}
+
 // downloadImage returns a local path, or "" when the image cannot be fetched.
 func (d *Dispatcher) downloadImage(url string) string {
 	dir := filepath.Join(d.cacheDir, "images")
 	ctx, cancel := context.WithTimeout(d.ctx, imageTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	data, err := FetchImage(ctx, d.http, url)
 	if err != nil {
-		return ""
-	}
-	resp, err := d.http.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/") {
-		return ""
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
-	if err != nil || len(data) == 0 || len(data) > maxImageBytes {
 		return ""
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {

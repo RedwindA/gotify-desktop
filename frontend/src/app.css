@@ -83,3 +83,19 @@ body {
 .sidenav-top {
   padding-top: min(var(--mygo-titlebar-height, 0px), calc(var(--mygo-titlebar-inset-left, 0px) * 100));
 }
+
+/* The image of a message (bigImageUrl), at its size up to the card's width. */
+.msg-image {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.msg-image-loading {
+  width: 240px;
+  height: 135px;
+  background: var(--color-background-muted, rgb(128 128 128 / 12%));
+  cursor: default;
+}

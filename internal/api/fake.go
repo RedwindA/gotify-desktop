@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,8 @@ type FakeBackend struct {
 	Added    []app.ServerInput
 	Deleted  []uint
 	Tested   atomic.Int32
+	// Images are the images FetchImage serves, by URL.
+	Images map[string][]byte
 	snap     atomic.Pointer[app.Snapshot]
 	gen      uint64
 }
@@ -80,7 +83,7 @@ func (f *FakeBackend) Messages(q store.MessageQuery) ([]store.StoredMessage, err
 	var out []store.StoredMessage
 	for _, m := range f.Msgs {
 		switch {
-		case q.ServerID != 0 && m.ServerID != q.ServerID, q.AppID != 0 && m.AppID != q.AppID:
+		case q.ServerID != 0 && m.ServerID != q.ServerID, q.AppID != 0 && m.AppID != q.AppID, q.ID != 0 && m.ID != q.ID:
 			continue
 		case q.Search != "" && !strings.Contains(strings.ToLower(m.Title+" "+m.Message.Message), strings.ToLower(q.Search)):
 			continue
@@ -214,3 +217,12 @@ func (f *FakeBackend) SetAppPref(serverID int64, appID uint, p store.AppPref) er
 }
 
 func (f *FakeBackend) Test() error { f.Tested.Add(1); return nil }
+
+func (f *FakeBackend) FetchImage(ctx context.Context, url string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if b, ok := f.Images[url]; ok {
+		return b, nil
+	}
+	return nil, errors.New("HTTP 404")
+}

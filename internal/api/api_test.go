@@ -72,6 +72,29 @@ func TestAppImageIsADataURL(t *testing.T) {
 	}
 }
 
+func TestMessageImage(t *testing.T) {
+	f := Demo("")
+	_, d := start(t, f, Platform{})
+	page, _ := d.Messages(Query{ServerID: 1, AppID: 3})
+	if len(page.Messages) != 1 || page.Messages[0].ImageURL != demoSnapshotURL {
+		t.Fatalf("the image URL is not in the message: %+v", page.Messages)
+	}
+	ctx := context.Background()
+	if img, err := d.MessageImage(ctx, 1, 8); err != nil || !strings.HasPrefix(img, "data:image/png;base64,") {
+		t.Errorf("image: %.40q, %v", img, err)
+	}
+	if img, err := d.MessageImage(ctx, 1, 9); img != "" || err != nil {
+		t.Errorf("a message without an image: %q, %v", img, err)
+	}
+	if img, err := d.MessageImage(ctx, 2, 8); img != "" || err != nil {
+		t.Errorf("a message of another server: %q, %v", img, err)
+	}
+	delete(f.Images, demoSnapshotURL)
+	if _, err := d.MessageImage(ctx, 1, 8); err == nil {
+		t.Error("a failed download succeeded")
+	}
+}
+
 func TestMessagesScopeSearchAndFields(t *testing.T) {
 	_, d := start(t, Demo(""), Platform{})
 	all, _ := d.Messages(Query{})

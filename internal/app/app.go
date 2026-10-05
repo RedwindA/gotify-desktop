@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -663,6 +664,11 @@ func (a *App) HandleActivation(id string) Activation {
 }
 
 // Test sends a sample notification through the notifier.
+// FetchImage downloads the image a message shows (notify.BigImageURL).
+func (a *App) FetchImage(ctx context.Context, url string) ([]byte, error) {
+	return notify.FetchImage(ctx, http.DefaultClient, url)
+}
+
 func (a *App) Test() error {
 	return a.opts.Notifier.Show(notify.Notification{
 		ID: "test", Title: "Gotify Desktop", Body: i18n.T("Notifications work."), AppName: "Gotify Desktop", Level: notify.LevelNormal,

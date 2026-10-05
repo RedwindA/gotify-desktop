@@ -58,7 +58,8 @@ func Demo(imageURL string) *FakeBackend {
 			false, map[string]any{"client::display": md["client::display"], "client::notification": click["client::notification"]}),
 		msg(1, 14, 1, 22*time.Minute, 5, "Nightly backup finished", "## Summary\n\n| Host | Size | Time |\n|---|---|---|\n| nas-01 | 412 GB | 41m |\n| laptop | 38 GB | 6m |\n\n> All snapshots verified.\n\n```\nrestic check: no errors\n```",
 			false, md),
-		msg(1, 8, 3, 2*time.Hour, 4, "Front door opened", "The front door was opened at 14:02 while everyone was away.", true, nil),
+		msg(1, 8, 3, 2*time.Hour, 4, "Front door opened", "The front door was opened at 14:02 while everyone was away.", true,
+			map[string]any{"client::notification": map[string]any{"bigImageUrl": demoSnapshotURL}}),
 		msg(1, 7, 1, 3*time.Hour, 2, "", "Plain text message with a link https://example.com/status and a second line.\nSecond line here.", true, nil),
 		msg(1, 6, 2, 26*time.Hour, 5, "CPU temperature normal", "![chart]("+imageURL+")\n\nBack to **54 °C** after the fan curve change.", true, md),
 		msg(1, 5, 1, 50*time.Hour, 1, "Backup started", "Starting nightly job…", true, nil),
@@ -66,9 +67,14 @@ func Demo(imageURL string) *FakeBackend {
 			false, md),
 		msg(2, 30, 2, 5*time.Hour, 3, "Deployed v2.14.0 to production", "Rollout complete in 3m 12s.", true, nil),
 	}
+	f.Images = map[string][]byte{demoSnapshotURL: DemoChart()}
 	f.Refresh()
 	return f
 }
+
+// demoSnapshotURL is the image of a demo message, which FetchImage serves without a network.
+const demoSnapshotURL = "https://ha.home.example/api/camera_proxy/camera.front_door"
+
 
 // DemoChart is the image of the demo's chart message, a PNG.
 func DemoChart() []byte {

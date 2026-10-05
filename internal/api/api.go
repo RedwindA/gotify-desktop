@@ -37,6 +37,8 @@ type Backend interface {
 	SetSettings(s notify.Settings) error
 	SetAppPref(serverID int64, appID uint, p store.AppPref) error
 	Test() error
+	// FetchImage downloads the image of a message, from a URL in its extras.
+	FetchImage(ctx context.Context, url string) ([]byte, error)
 }
 
 // Platform holds what the service needs from the desktop; every field is optional.
@@ -184,6 +186,8 @@ type Message struct {
 	Read     bool      `json:"read"`
 	// ClickURL is where clicking the message's notification leads.
 	ClickURL string `json:"clickUrl"`
+	// ImageURL is the image the message shows below its body (MessageImage loads it).
+	ImageURL string `json:"imageUrl"`
 }
 
 // MessagePage is a page of messages.
@@ -370,6 +374,34 @@ func (d *Desktop) AppImage(serverID int64, appID uint) string {
 	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(a.Image)
 }
 
+// MessageImage returns the image of a message (Message.ImageURL) as a data
+// URL, or "" when it has none. Go downloads it, so the server's image loads
+// whatever the page's origin allows.
+func (d *Desktop) MessageImage(ctx context.Context, serverID int64, id uint) (string, error) {
+	msgs, err := d.be.Messages(store.MessageQuery{ServerID: serverID, ID: id, Limit: 1})
+	if err != nil || len(msgs) == 0 {
+		return "", err
+	}
+	u := notify.BigImageURL(msgs[0].Extras)
+	if u == "" {
+		return "", nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, imageTimeout)
+	defer cancel()
+	data, err := d.be.FetchImage(ctx, u)
+	if err != nil {
+		return "", err
+	}
+	ct := http.DetectContentType(data)
+	if !strings.HasPrefix(ct, "image/") {
+		return "", errors.New("not an image")
+	}
+	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+// imageTimeout bounds the download of a message's image.
+const imageTimeout = 20 * time.Second
+
 // Messages returns the newest messages that match q.
 func (d *Desktop) Messages(q Query) (MessagePage, error) {
 	gen := d.be.Snapshot().MsgGen
@@ -394,7 +426,7 @@ func (d *Desktop) Messages(q Query) (MessagePage, error) {
 		for _, m := range msgs {
 			page.Messages = append(page.Messages, Message{ServerID: m.ServerID, ID: m.ID, AppID: m.AppID, Title: m.Title,
 				Body: m.Message.Message, Markdown: isMarkdown(m.Extras), Priority: m.Priority, Date: m.Date, Read: m.Read,
-				ClickURL: notify.ClickURL(m.Extras)})
+				ClickURL: notify.ClickURL(m.Extras), ImageURL: notify.BigImageURL(m.Extras)})
 		}
 		return page, nil
 	}
