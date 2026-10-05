@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -232,5 +233,111 @@ func TestReopenKeepsDataAndConcurrentUse(t *testing.T) {
 	s.db.QueryRow("PRAGMA user_version").Scan(&v)
 	if v != len(migrations) {
 		t.Fatalf("version %d", v)
+	}
+}
+
+func TestMigrationRebuildsServersKeepingChildren(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range migrations[:2] {
+		if _, err := raw.Exec(m.sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw.Exec(`INSERT INTO servers(id,name,url,created_at) VALUES(1,'a','http://a',1),(2,'b','http://b',2)`)
+	raw.Exec(`INSERT INTO messages(server_id,id,app_id,date) VALUES(1,5,1,1),(2,6,1,1)`)
+	raw.Exec(`INSERT INTO apps(server_id,id,name) VALUES(1,1,'App')`)
+	raw.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized) VALUES(1,5,1)`)
+	raw.Exec(`PRAGMA user_version=2`)
+	raw.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	svs, _ := s.Servers()
+	msgs, _ := s.Messages(MessageQuery{})
+	apps, _ := s.Apps(1)
+	if last, init, _ := s.LastSeen(1); len(svs) != 2 || len(msgs) != 2 || len(apps) != 1 || last != 5 || !init {
+		t.Fatalf("data lost: %d servers %d msgs %d apps last=%d", len(svs), len(msgs), len(apps), last)
+	}
+	if err := s.DeleteServer(2); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := s.AddServer(Server{Name: "c", URL: "http://c"})
+	if id != 3 {
+		t.Fatalf("id %d reused", id)
+	}
+	if left, _ := s.Messages(MessageQuery{ServerID: 2}); len(left) != 0 {
+		t.Fatal("cascade lost after migration")
+	}
+}
+
+func TestDeletedMessagesAreNotReinserted(t *testing.T) {
+	s, id := open(t)
+	s.SaveMessages(id, []gotify.Message{msg(1, 1, "a"), msg(2, 1, "b")})
+	if err := s.DeleteMessage(id, 2); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SaveMessages(id, []gotify.Message{msg(2, 1, "b"), msg(3, 1, "c")})
+	if err != nil || !reflect.DeepEqual(ids(got), []uint{3}) {
+		t.Fatalf("%v %v", ids(got), err)
+	}
+	got, _ = s.SaveMessages(id, []gotify.Message{msg(2, 1, "b")})
+	if len(got) != 0 {
+		t.Fatal("tombstoned message came back")
+	}
+	if last, _, _ := s.LastSeen(id); last != 3 {
+		t.Fatalf("last_seen %d", last)
+	}
+	s.DeleteServer(id)
+	var n int
+	s.db.QueryRow("SELECT count(*) FROM deleted_messages").Scan(&n)
+	if n != 0 {
+		t.Fatal("tombstones not cascaded")
+	}
+}
+
+func TestServerUserPersisted(t *testing.T) {
+	s, _ := open(t)
+	id, _ := s.AddServer(Server{Name: "u", URL: "http://u", UserID: 7, UserName: "alice"})
+	sv, _ := s.Server(id)
+	if sv.UserID != 7 || sv.UserName != "alice" {
+		t.Fatalf("%+v", sv)
+	}
+}
+
+func TestSaveInitialImportIsAtomicAndSetsFloor(t *testing.T) {
+	s, id := open(t)
+	live, hist, err := s.SaveInitialImport(id, []gotify.Message{msg(6, 1, "live")}, []gotify.Message{msg(3, 1, "c"), msg(4, 1, "d"), msg(5, 1, "e"), msg(6, 1, "live")}, 3)
+	if err != nil || !reflect.DeepEqual(ids(live), []uint{6}) || !reflect.DeepEqual(ids(hist), []uint{3, 4, 5}) {
+		t.Fatalf("%v %v %v", ids(live), ids(hist), err)
+	}
+	if last, init, _ := s.LastSeen(id); last != 6 || !init {
+		t.Fatalf("last=%d init=%v", last, init)
+	}
+	if floor, _ := s.ImportFloor(id); floor != 3 {
+		t.Fatalf("floor %d", floor)
+	}
+	s.SaveMessages(id, []gotify.Message{msg(7, 1, "later")})
+	if floor, _ := s.ImportFloor(id); floor != 3 {
+		t.Fatalf("SaveMessages changed the floor: %d", floor)
+	}
+
+	s2, id2 := open(t)
+	bad := msg(9, 1, "bad")
+	bad.Extras = map[string]any{"x": make(chan int)}
+	if _, _, err := s2.SaveInitialImport(id2, []gotify.Message{msg(8, 1, "live")}, []gotify.Message{bad}, 9); err == nil {
+		t.Fatal("expected an error")
+	}
+	if _, init, _ := s2.LastSeen(id2); init {
+		t.Fatal("a failed import initialized the server")
+	}
+	if left, _ := s2.Messages(MessageQuery{ServerID: id2}); len(left) != 0 {
+		t.Fatalf("partial import kept: %d", len(left))
 	}
 }

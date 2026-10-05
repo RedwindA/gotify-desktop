@@ -20,7 +20,13 @@ import (
 
 func main() {
 	wait := flag.Duration("wait", 2*time.Minute, "how long to keep running for clicks")
-	flag.Parse()
+	var args []string
+	for _, a := range os.Args[1:] {
+		if !notify.IsActivationLaunch([]string{a}) {
+			args = append(args, a)
+		}
+	}
+	flag.CommandLine.Parse(args)
 
 	dir := filepath.Join(os.TempDir(), "gotify-notifytest")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

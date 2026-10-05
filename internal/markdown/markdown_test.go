@@ -132,3 +132,31 @@ func TestImageLoadsAsynchronously(t *testing.T) {
 		t.Fatalf("image fetched %d times", served)
 	}
 }
+
+func TestEscapesAndEntitiesDecodedExceptInCode(t *testing.T) {
+	src := "Tom &amp; Jerry \\*not italic\\* and `a &amp; b`\n\n```\nx &lt; y\n```"
+	tt := ui.NewTester(view(New(NewImageCache(nil, nil)), src, true), 500, 300)
+	hasAll(t, tt, "Tom & Jerry", "*not italic*", "a &amp; b", "x &lt; y")
+}
+
+func TestDecodeBitmapRejectsHugeImages(t *testing.T) {
+	enc := func(w, h int) []byte {
+		var b bytes.Buffer
+		png.Encode(&b, image.NewGray(image.Rect(0, 0, w, h)))
+		return b.Bytes()
+	}
+	if _, err := DecodeBitmap(enc(20000, 1)); err == nil {
+		t.Error("side over 16384 accepted")
+	}
+	if _, err := DecodeBitmap(enc(7000, 7000)); err == nil {
+		t.Error("49 megapixels accepted")
+	}
+	if _, err := DecodeBitmap([]byte("junk")); err == nil {
+		t.Error("junk accepted")
+	}
+	if b, err := DecodeBitmap(enc(40, 20)); err != nil {
+		t.Errorf("small image: %v", err)
+	} else if w, h := b.Size(); w != 40 || h != 20 {
+		t.Errorf("%dx%d", w, h)
+	}
+}

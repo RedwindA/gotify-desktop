@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,5 +163,62 @@ func TestInvalidOptions(t *testing.T) {
 	}
 	if _, err := New("http://x", "", Options{CACertPEM: []byte("junk")}); err == nil {
 		t.Fatal("want error for bad PEM")
+	}
+}
+
+func TestRedirectsDoNotLeakTheToken(t *testing.T) {
+	var crossGot, originGot, sameGot []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		crossGot = append(crossGot, r.Header.Get("X-Gotify-Key"))
+		w.Write([]byte(`[]`))
+	}))
+	defer other.Close()
+	var origin *httptest.Server
+	origin = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/application":
+			originGot = append(originGot, r.Header.Get("X-Gotify-Key"))
+			http.Redirect(w, r, other.URL+"/application", http.StatusFound)
+		case "/message":
+			http.Redirect(w, r, origin.URL+"/same", http.StatusFound)
+		case "/same":
+			sameGot = append(sameGot, r.Header.Get("X-Gotify-Key"))
+			w.Write([]byte(`{"messages":[]}`))
+		case "/current/user":
+			http.Redirect(w, r, origin.URL+"/current/user", http.StatusFound)
+		}
+	}))
+	defer origin.Close()
+	c, _ := New(origin.URL, "secret", Options{})
+	ctx := context.Background()
+	if _, err := c.Applications(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(originGot) != 1 || originGot[0] != "secret" {
+		t.Fatalf("the origin should receive the token: %q", originGot)
+	}
+	if len(crossGot) != 1 || crossGot[0] != "" {
+		t.Fatalf("token leaked to another host: %q", crossGot)
+	}
+	if _, err := c.Messages(ctx, 10, 0); err != nil || len(sameGot) != 1 || sameGot[0] != "secret" {
+		t.Fatalf("same-origin redirect lost the token: %q %v", sameGot, err)
+	}
+	_, err := c.CurrentUser(ctx)
+	if err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") {
+		t.Fatalf("redirect loop: %v", err)
+	}
+}
+
+func TestRedirectHTTPSToHTTPRefused(t *testing.T) {
+	var hit bool
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+	defer plain.Close()
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL, http.StatusFound)
+	}))
+	defer tlsSrv.Close()
+	c, _ := New(tlsSrv.URL, "secret", Options{InsecureSkipVerify: true})
+	if _, err := c.Version(context.Background()); err == nil || hit {
+		t.Fatalf("downgrade followed: err=%v hit=%v", err, hit)
 	}
 }

@@ -2,7 +2,9 @@ package view
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,7 +14,11 @@ import (
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
 	"gotify-desktop/internal/markdown"
+	"gotify-desktop/internal/notify"
+	"gotify-desktop/internal/store"
 )
+
+var testMarkDelay = 30 * time.Millisecond
 
 type harness struct {
 	t       *testing.T
@@ -22,14 +28,21 @@ type harness struct {
 	pending chan func()
 }
 
-func newHarness(t *testing.T, f *FakeBackend) *harness {
+func newHarness(t *testing.T, f *FakeBackend) *harness { return newHarnessWith(t, f, nil) }
+
+func newHarnessWith(t *testing.T, f *FakeBackend, tweak func(*Platform)) *harness {
 	h := &harness{t: t, f: f, pending: make(chan func(), 64)}
-	h.m = New(f, Platform{
+	plat := Platform{
 		Version: "0.1.0", DataDir: "/data",
 		Update:  func(fn func()) { h.pending <- fn },
 		Focused: func() bool { return false },
 		PickCA:  func() (string, []byte, error) { return "ca.pem", []byte("junk"), nil },
-	}, markdown.NewImageCache(nil, nil))
+	}
+	if tweak != nil {
+		tweak(&plat)
+	}
+	h.m = New(f, plat, markdown.NewImageCache(nil, nil))
+	h.m.markDelay = testMarkDelay
 	h.tt = ui.NewTester(h.m.View, 1000, 700)
 	return h
 }
@@ -313,4 +326,87 @@ func TestRelTime(t *testing.T) {
 	}
 	_ = app.Explain
 	_ = errors.New
+}
+
+func manyUnread(n int) *FakeBackend {
+	f := Demo("")
+	f.Msgs = nil
+	for i := 1; i <= n; i++ {
+		f.Msgs = append(f.Msgs, store.StoredMessage{ServerID: 1, Message: gotify.Message{
+			ID: uint(1000 - i), AppID: 1, Title: fmt.Sprintf("message %d", i), Message: "body", Priority: 3, Date: time.Now().Add(-time.Duration(i) * time.Minute)}})
+	}
+	f.Refresh()
+	return f
+}
+
+func readCount(f *FakeBackend) (n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, m := range f.Msgs {
+		if m.Read {
+			n++
+		}
+	}
+	return
+}
+
+func TestOnlyVisibleMessagesAreMarkedRead(t *testing.T) {
+	f := manyUnread(40)
+	focused := true
+	h := newHarnessWith(t, f, func(p *Platform) { p.Focused = func() bool { return focused } })
+	h.tt.SetSize(1000, 500)
+	h.tt.Frame()
+	h.settle()
+	h.tt.Frame()
+	h.settle()
+	read := readCount(f)
+	if read == 0 || read >= 20 {
+		t.Fatalf("%d of 40 marked read; only what fits on screen should be", read)
+	}
+	if f.Msgs[len(f.Msgs)-1].Read || f.Msgs[0].Read != true {
+		t.Fatalf("first read=%v last read=%v", f.Msgs[0].Read, f.Msgs[len(f.Msgs)-1].Read)
+	}
+}
+
+func TestMarkReadIsCancelledByScopeChangeAndBlur(t *testing.T) {
+	f := manyUnread(5)
+	focused := true
+	testMarkDelay = 150 * time.Millisecond
+	defer func() { testMarkDelay = 30 * time.Millisecond }()
+	h := newHarnessWith(t, f, func(p *Platform) { p.Focused = func() bool { return focused } })
+	h.m.update(func() { h.m.scope = scope{1, 2} })
+	h.settle()
+	if n := readCount(f); n != 0 {
+		t.Fatalf("scope changed during the delay but %d were marked", n)
+	}
+	h.m.update(func() { h.m.scope = scope{} })
+	h.settle()
+	focused = false
+	h.m.markBusy = false
+	h.tt.Frame()
+	h.settle()
+	if n := readCount(f); n != 0 {
+		t.Fatalf("unfocused window marked %d", n)
+	}
+}
+
+func TestSettingsSavesAreSerializedLastWins(t *testing.T) {
+	f := NewFakeBackend()
+	var first atomic.Bool
+	f.OnSetSettings = func(s notify.Settings) {
+		if first.CompareAndSwap(false, true) {
+			time.Sleep(80 * time.Millisecond)
+		}
+	}
+	h := newHarness(t, f)
+	for i := 1; i <= 3; i++ {
+		h.m.settings.PausedUntil = time.Date(2030, 1, i, 0, 0, 0, 0, time.UTC)
+		h.m.saveSettings()
+	}
+	h.settle()
+	time.Sleep(200 * time.Millisecond)
+	h.settle()
+	if got := f.Settings.PausedUntil; got.Day() != 3 {
+		t.Fatalf("an older save landed last: %v", got)
+	}
 }

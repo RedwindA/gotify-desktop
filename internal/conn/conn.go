@@ -54,6 +54,8 @@ type Config struct {
 	MaxBackoff           time.Duration
 	StableAfter          time.Duration
 	ImportOnFirstConnect int
+	// PageSize is how many messages a catch-up requests at once (100).
+	PageSize int
 }
 
 func (c Config) withDefaults() Config {
@@ -67,6 +69,9 @@ func (c Config) withDefaults() Config {
 	def(&c.MinBackoff, time.Second)
 	def(&c.MaxBackoff, 5*time.Minute)
 	def(&c.StableAfter, time.Minute)
+	if c.PageSize <= 0 {
+		c.PageSize = pageSize
+	}
 	if c.ImportOnFirstConnect <= 0 {
 		c.ImportOnFirstConnect = 200
 	}
@@ -76,6 +81,8 @@ func (c Config) withDefaults() Config {
 type Store interface {
 	LastSeen(serverID int64) (uint, bool, error)
 	SaveMessages(serverID int64, msgs []gotify.Message) ([]gotify.Message, error)
+	SaveInitialImport(serverID int64, live, history []gotify.Message, floor uint) (insertedLive, insertedHistory []gotify.Message, err error)
+	ImportFloor(serverID int64) (uint, error)
 	ReplaceApps(serverID int64, apps []gotify.Application) error
 	Apps(serverID int64) ([]store.App, error)
 	SetAppImage(serverID int64, appID uint, img []byte) error
@@ -83,6 +90,7 @@ type Store interface {
 
 const (
 	pageSize       = 100
+	catchUpOverlap = 20
 	dialTimeout    = 15 * time.Second
 	unknownAppWait = time.Minute
 )
@@ -325,7 +333,7 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 	if err = s.syncApps(ctx, client); err != nil {
 		return connectedAt, err
 	}
-	if err = s.catchUp(ctx, client); err != nil {
+	if err = s.catchUp(ctx, client, q); err != nil {
 		return connectedAt, err
 	}
 	for {
@@ -374,25 +382,31 @@ func (s *Supervisor) fetchImages(ctx context.Context, client *gotify.Client) {
 	}
 }
 
-func (s *Supervisor) catchUp(ctx context.Context, client *gotify.Client) error {
+func (s *Supervisor) catchUp(ctx context.Context, client *gotify.Client, q *queue) error {
 	last, initialized, err := s.st.LastSeen(s.id)
 	if err != nil {
 		return err
 	}
 	var got []gotify.Message
 	var cursor uint
+	below := 0 // messages at or below last_seen collected so far
 	for {
-		page, err := client.Messages(ctx, pageSize, cursor)
+		page, err := client.Messages(ctx, s.cfg.PageSize, cursor)
 		if err != nil {
 			return err
 		}
 		done := false
+		// The server broadcasts concurrently with committing, so a message below
+		// last_seen may never have been delivered: keep going until catchUpOverlap
+		// messages at or below it are in hand. SaveMessages drops the stored ones.
 		for _, m := range page.Messages {
 			if initialized && m.ID <= last {
-				done = true
-				break
+				below++
 			}
 			got = append(got, m)
+		}
+		if initialized && below >= catchUpOverlap {
+			done = true
 		}
 		if !initialized && len(got) >= s.cfg.ImportOnFirstConnect {
 			got = got[:s.cfg.ImportOnFirstConnect]
@@ -403,24 +417,61 @@ func (s *Supervisor) catchUp(ctx context.Context, client *gotify.Client) error {
 		}
 		cursor = page.Paging.Since
 	}
-	if initialized && len(got) == 0 {
+	slices.Reverse(got)
+	if initialized {
+		floor, err := s.st.ImportFloor(s.id)
+		if err != nil {
+			return err
+		}
+		got = slices.DeleteFunc(got, func(m gotify.Message) bool { return m.ID < floor })
+		if len(got) == 0 {
+			return nil
+		}
+		return s.deliver(ctx, client, got, true, false)
+	}
+	// Messages that arrived while the history loaded are news, not history; both are
+	// saved together so a failed save leaves the server uninitialized.
+	live := q.take()
+	if err := s.syncUnknownApps(ctx, client, slices.Concat(live, got)); err != nil {
+		return err
+	}
+	var floor uint
+	if len(got) > 0 {
+		floor = got[0].ID
+	}
+	insLive, insHist, err := s.st.SaveInitialImport(s.id, live, got, floor)
+	if err != nil {
+		return err
+	}
+	if len(insLive) > 0 {
+		s.sink(Event{ServerID: s.id, Kind: EventMessages, Messages: insLive})
+	}
+	if len(insHist) > 0 {
+		s.sink(Event{ServerID: s.id, Kind: EventMessages, Messages: insHist, CatchUp: true, Silent: true})
+	}
+	return nil
+}
+
+// syncUnknownApps refreshes the applications when msgs name one that is not known yet.
+func (s *Supervisor) syncUnknownApps(ctx context.Context, client *gotify.Client, msgs []gotify.Message) error {
+	if !s.hasUnknownApp(msgs) {
 		return nil
 	}
-	slices.Reverse(got)
-	return s.deliver(ctx, client, got, true, !initialized)
+	if err := s.syncApps(ctx, client); errors.Is(err, gotify.ErrUnauthorized) {
+		return err
+	}
+	now := time.Now()
+	for _, m := range msgs {
+		if !s.known[m.AppID] {
+			s.missingAt[m.AppID] = now
+		}
+	}
+	return nil
 }
 
 func (s *Supervisor) deliver(ctx context.Context, client *gotify.Client, msgs []gotify.Message, catchUp, silent bool) error {
-	if s.hasUnknownApp(msgs) {
-		if err := s.syncApps(ctx, client); errors.Is(err, gotify.ErrUnauthorized) {
-			return err
-		}
-		now := time.Now()
-		for _, m := range msgs {
-			if !s.known[m.AppID] {
-				s.missingAt[m.AppID] = now
-			}
-		}
+	if err := s.syncUnknownApps(ctx, client, msgs); err != nil {
+		return err
 	}
 	inserted, err := s.st.SaveMessages(s.id, msgs)
 	if err != nil {

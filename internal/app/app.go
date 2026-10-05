@@ -104,6 +104,8 @@ type Activation struct {
 }
 
 type runtime struct {
+	// op serializes the operations that change the server: UpdateServer, RemoveServer and the end of Relogin.
+	op      sync.Mutex
 	sv      store.Server
 	sup     *conn.Supervisor
 	state   conn.State
@@ -117,13 +119,14 @@ type App struct {
 	st   *store.Store
 	disp *notify.Dispatcher
 
-	mu       sync.Mutex
-	servers  map[int64]*runtime
-	closed   bool
-	snap     atomic.Pointer[Snapshot]
-	gen      uint64
-	msgGen   uint64
-	settings atomic.Pointer[notify.Settings]
+	rebuildMu sync.Mutex
+	mu        sync.Mutex
+	servers   map[int64]*runtime
+	closed    bool
+	snap      atomic.Pointer[Snapshot]
+	gen       uint64
+	msgGen    uint64
+	settings  atomic.Pointer[notify.Settings]
 }
 
 func New(opts Options) (*App, error) {
@@ -173,22 +176,21 @@ func (a *App) clientFor(sv store.Server, token string) (*gotify.Client, error) {
 
 func (a *App) startServer(sv store.Server) {
 	rt := &runtime{sv: sv}
+	var sup *conn.Supervisor
+	if token, err := a.opts.Tokens.Get(sv.ID); err != nil || token == "" {
+		rt.noToken, rt.state, rt.err = true, conn.AuthFailed, gotify.ErrUnauthorized
+	} else if client, err := a.clientFor(sv, token); err != nil {
+		rt.state, rt.err = conn.Disconnected, err
+	} else {
+		sup = conn.New(sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
+		rt.sup = sup
+	}
 	a.mu.Lock()
 	a.servers[sv.ID] = rt
 	a.mu.Unlock()
-	token, err := a.opts.Tokens.Get(sv.ID)
-	if err != nil || token == "" {
-		rt.noToken, rt.state = true, conn.AuthFailed
-		rt.err = gotify.ErrUnauthorized
-		return
+	if sup != nil {
+		sup.Start()
 	}
-	client, err := a.clientFor(sv, token)
-	if err != nil {
-		rt.state, rt.err = conn.Disconnected, err
-		return
-	}
-	rt.sup = conn.New(sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
-	rt.sup.Start()
 }
 
 func (a *App) sink(ev conn.Event) {
@@ -228,6 +230,8 @@ func ImageKey(img []byte) string {
 }
 
 func (a *App) rebuild(messages bool) {
+	a.rebuildMu.Lock()
+	defer a.rebuildMu.Unlock()
 	svs, err := a.st.Servers()
 	if err != nil {
 		return
@@ -271,6 +275,14 @@ func (a *App) rebuild(messages bool) {
 	a.mu.Unlock()
 }
 
+// revokeLogin undoes a login, best effort. It has a context of its own: the caller's may be
+// the very reason the login is being undone.
+func revokeLogin(baseURL, user, pass string, clientID uint, opts gotify.Options) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	gotify.DeleteClientBasic(ctx, baseURL, user, pass, clientID, opts)
+}
+
 func hostName(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {
 		return u.Host
@@ -311,6 +323,16 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 		return 0, err
 	}
 	sv.ClientID = clientID
+	authed, err := a.clientFor(sv, token)
+	if err != nil {
+		return 0, err
+	}
+	me, err := authed.CurrentUser(ctx)
+	if err != nil {
+		revokeLogin(in.URL, in.User, in.Pass, clientID, gotify.Options{InsecureSkipVerify: in.Insecure, CACertPEM: in.CACertPEM})
+		return 0, err
+	}
+	sv.UserID, sv.UserName = me.ID, me.Name
 	id, err := a.st.AddServer(sv)
 	if err != nil {
 		return 0, err
@@ -326,31 +348,45 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 	return id, nil
 }
 
-func (a *App) runtimeOf(id int64) (*runtime, error) {
+// rtView is a consistent copy of what a runtime holds, taken under the lock.
+type rtView struct {
+	rt  *runtime
+	sv  store.Server
+	sup *conn.Supervisor
+}
+
+func (a *App) runtimeOf(id int64) (rtView, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	rt := a.servers[id]
 	if rt == nil {
-		return nil, fmt.Errorf("unknown server %d", id)
+		return rtView{}, fmt.Errorf("unknown server %d", id)
 	}
-	return rt, nil
+	return rtView{rt, rt.sv, rt.sup}, nil
 }
 
-// swapClient points the server's supervisor at a client for its current settings and token.
-func (a *App) swapClient(rt *runtime, token string) error {
-	client, err := a.clientFor(rt.sv, token)
+func (a *App) setServer(rt *runtime, sv store.Server) {
+	a.mu.Lock()
+	rt.sv = sv
+	a.mu.Unlock()
+}
+
+// swapClient points the server's supervisor at a client for its settings and token, starting it if needed.
+func (a *App) swapClient(v rtView, token string) error {
+	client, err := a.clientFor(v.sv, token)
 	if err != nil {
 		return err
 	}
 	a.mu.Lock()
-	sup := rt.sup
-	rt.noToken = false
-	a.mu.Unlock()
+	v.rt.noToken = false
+	sup := v.rt.sup
+	started := false
 	if sup == nil {
-		sup = conn.New(rt.sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
-		a.mu.Lock()
-		rt.sup = sup
-		a.mu.Unlock()
+		sup = conn.New(v.sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
+		v.rt.sup, started = sup, true
+	}
+	a.mu.Unlock()
+	if started {
 		sup.Start()
 		return nil
 	}
@@ -360,21 +396,49 @@ func (a *App) swapClient(rt *runtime, token string) error {
 }
 
 func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) error {
-	rt, err := a.runtimeOf(serverID)
+	v, err := a.runtimeOf(serverID)
 	if err != nil {
 		return err
 	}
-	token, clientID, err := gotify.Login(ctx, rt.sv.URL, user, pass, clientName(),
-		gotify.Options{InsecureSkipVerify: rt.sv.InsecureSkipVerify, CACertPEM: []byte(rt.sv.CACertPEM)})
+	baseURL := v.sv.URL
+	opts := gotify.Options{InsecureSkipVerify: v.sv.InsecureSkipVerify, CACertPEM: []byte(v.sv.CACertPEM)}
+	token, clientID, err := gotify.Login(ctx, baseURL, user, pass, clientName(), opts)
 	if err != nil {
 		return err
 	}
+	client, err := a.clientFor(v.sv, token)
+	if err != nil {
+		return err
+	}
+	me, err := client.CurrentUser(ctx)
+	if err != nil {
+		revokeLogin(v.sv.URL, user, pass, clientID, opts)
+		return err
+	}
+	if v.sv.UserID != 0 && me.ID != v.sv.UserID {
+		revokeLogin(v.sv.URL, user, pass, clientID, opts)
+		return fmt.Errorf("This server was added as %s. Remove it and add it again to use another account.", v.sv.UserName)
+	}
+	v.rt.op.Lock()
+	defer v.rt.op.Unlock()
+	// The login was slow: apply it to the server as it is now, not as it was.
+	cur, err := a.runtimeOf(serverID)
+	if err != nil {
+		revokeLogin(baseURL, user, pass, clientID, opts)
+		return err
+	}
+	v = cur
 	if err := a.opts.Tokens.Set(serverID, token); err != nil {
 		return fmt.Errorf("storing the token: %w", err)
 	}
-	rt.sv.ClientID = clientID
-	a.st.UpdateServer(rt.sv)
-	if err := a.swapClient(rt, token); err != nil {
+	sv := v.sv
+	sv.ClientID, sv.UserID, sv.UserName = clientID, me.ID, me.Name
+	if err := a.st.UpdateServer(sv); err != nil {
+		return err
+	}
+	a.setServer(v.rt, sv)
+	v.sv = sv
+	if err := a.swapClient(v, token); err != nil {
 		return err
 	}
 	a.rebuild(false)
@@ -384,11 +448,16 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 
 // UpdateServer changes a server's settings; a nil ca keeps its CA certificate, an empty one removes it.
 func (a *App) UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca []byte) error {
-	rt, err := a.runtimeOf(serverID)
+	v, err := a.runtimeOf(serverID)
 	if err != nil {
 		return err
 	}
-	sv := rt.sv
+	v.rt.op.Lock()
+	defer v.rt.op.Unlock()
+	if v, err = a.runtimeOf(serverID); err != nil {
+		return err
+	}
+	sv := v.sv
 	sv.Name, sv.InsecureSkipVerify = name, insecure
 	if ca != nil {
 		sv.CACertPEM = string(ca)
@@ -402,9 +471,10 @@ func (a *App) UpdateServer(ctx context.Context, serverID int64, name string, ins
 	if err := a.st.UpdateServer(sv); err != nil {
 		return err
 	}
-	rt.sv = sv
+	a.setServer(v.rt, sv)
+	v.sv = sv
 	if token, err := a.opts.Tokens.Get(serverID); err == nil && token != "" {
-		if err := a.swapClient(rt, token); err != nil {
+		if err := a.swapClient(v, token); err != nil {
 			return err
 		}
 	}
@@ -414,19 +484,24 @@ func (a *App) UpdateServer(ctx context.Context, serverID int64, name string, ins
 }
 
 func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
-	rt, err := a.runtimeOf(serverID)
+	v, err := a.runtimeOf(serverID)
 	if err != nil {
 		return err
 	}
-	if token, err := a.opts.Tokens.Get(serverID); err == nil && token != "" && rt.sv.ClientID != 0 {
-		if client, err := a.clientFor(rt.sv, token); err == nil {
-			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			client.DeleteClient(cctx, rt.sv.ClientID)
+	v.rt.op.Lock()
+	defer v.rt.op.Unlock()
+	if v, err = a.runtimeOf(serverID); err != nil {
+		return err
+	}
+	if token, err := a.opts.Tokens.Get(serverID); err == nil && token != "" && v.sv.ClientID != 0 {
+		if client, err := a.clientFor(v.sv, token); err == nil {
+			cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			client.DeleteClient(cctx, v.sv.ClientID)
 			cancel()
 		}
 	}
-	if rt.sup != nil {
-		rt.sup.Stop()
+	if v.sup != nil {
+		v.sup.Stop()
 	}
 	a.mu.Lock()
 	delete(a.servers, serverID)
@@ -442,7 +517,7 @@ func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
 
 // DeleteMessage deletes on the server first and keeps the local copy when that fails.
 func (a *App) DeleteMessage(ctx context.Context, serverID int64, id uint) error {
-	rt, err := a.runtimeOf(serverID)
+	v, err := a.runtimeOf(serverID)
 	if err != nil {
 		return err
 	}
@@ -450,7 +525,7 @@ func (a *App) DeleteMessage(ctx context.Context, serverID int64, id uint) error 
 	if err != nil {
 		return err
 	}
-	client, err := a.clientFor(rt.sv, token)
+	client, err := a.clientFor(v.sv, token)
 	if err != nil {
 		return err
 	}

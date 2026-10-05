@@ -161,6 +161,9 @@ func TestMarkdownToPlain(t *testing.T) {
 			t.Errorf("%q -> %q, want %q", in, got, want)
 		}
 	}
+	if got := md("Tom &amp; Jerry \\*x\\* `a &amp; b`"); got != "Tom & Jerry *x* a &amp; b" {
+		t.Errorf("decode: %q", got)
+	}
 	if got := PlainBody(gotify.Message{Message: "**not** parsed"}); got != "**not** parsed" {
 		t.Errorf("plain text altered: %q", got)
 	}

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -82,6 +85,198 @@ func TestMissingTokenNeedsLogin(t *testing.T) {
 	sv, ok := a.Snapshot().Server(id)
 	if !ok || sv.State != conn.AuthFailed || !sv.NeedLogin || sv.Err == "" {
 		t.Fatalf("%+v", sv)
+	}
+}
+
+func TestStartupWithSeveralServersOneWithoutToken(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(dir + "/gotify.db")
+	unauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(401) }))
+	defer unauth.Close()
+	tokens := &secret.Memory{}
+	var ids []int64
+	for i := 0; i < 4; i++ {
+		id, _ := st.AddServer(store.Server{Name: fmt.Sprint("s", i), URL: unauth.URL})
+		ids = append(ids, id)
+		if i != 2 {
+			tokens.Set(id, "tok")
+		}
+	}
+	st.Close()
+	a, err := New(Options{DataDir: dir, CacheDir: t.TempDir(), Tokens: tokens, Notifier: &fakeNotifier{},
+		ConnConfig: conn.Config{MinBackoff: 10 * time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				a.Snapshot()
+				a.KickAll()
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+	wg.Wait()
+	eventually(t, "every server auth-failed", func() bool {
+		for _, id := range ids {
+			if sv, ok := a.Snapshot().Server(id); !ok || sv.State != conn.AuthFailed {
+				return false
+			}
+		}
+		return true
+	})
+	if sv, _ := a.Snapshot().Server(ids[2]); !sv.NeedLogin {
+		t.Fatal("server without token should need a login")
+	}
+}
+
+func TestReloginDoesNotClobberConcurrentEdits(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/client":
+			once.Do(func() { close(entered) })
+			<-release
+			w.Write([]byte(`{"id":9,"token":"newtok"}`))
+		case "/current/user":
+			w.Write([]byte(`{"id":1,"name":"alice"}`))
+		default:
+			w.WriteHeader(401)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	st, _ := store.Open(dir + "/gotify.db")
+	id, _ := st.AddServer(store.Server{Name: "orig", URL: srv.URL, ClientID: 3, UserID: 1, UserName: "alice"})
+	st.Close()
+	tokens := &secret.Memory{}
+	tokens.Set(id, "old")
+	a, err := New(Options{DataDir: dir, CacheDir: t.TempDir(), Tokens: tokens, Notifier: &fakeNotifier{},
+		ConnConfig: conn.Config{MinBackoff: 10 * time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	done := make(chan error, 1)
+	go func() { done <- a.Relogin(context.Background(), id, "alice", "pw") }()
+	<-entered
+	if err := a.UpdateServer(context.Background(), id, "Renamed", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	sv, _ := a.st.Server(id)
+	if sv.Name != "Renamed" || !sv.InsecureSkipVerify || sv.ClientID != 9 || sv.UserName != "alice" {
+		t.Fatalf("%+v", sv)
+	}
+	if tok, _ := tokens.Get(id); tok != "newtok" {
+		t.Fatalf("token %q", tok)
+	}
+}
+
+func TestReloginOfARemovedServerRevokesTheNewClient(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var revoked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/client" && r.Method == "POST":
+			once.Do(func() { close(entered) })
+			<-release
+			w.Write([]byte(`{"id":9,"token":"newtok"}`))
+		case r.URL.Path == "/current/user":
+			w.Write([]byte(`{"id":1,"name":"alice"}`))
+		case r.Method == "DELETE":
+			_, _, basic := r.BasicAuth()
+			mu.Lock()
+			revoked = append(revoked, fmt.Sprint(r.URL.Path, " basic=", basic))
+			mu.Unlock()
+		default:
+			w.WriteHeader(401)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	st, _ := store.Open(dir + "/gotify.db")
+	id, _ := st.AddServer(store.Server{Name: "gone", URL: srv.URL, ClientID: 3, UserID: 1, UserName: "alice"})
+	st.Close()
+	tokens := &secret.Memory{}
+	tokens.Set(id, "old")
+	a, err := New(Options{DataDir: dir, CacheDir: t.TempDir(), Tokens: tokens, Notifier: &fakeNotifier{},
+		ConnConfig: conn.Config{MinBackoff: 10 * time.Millisecond}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	done := make(chan error, 1)
+	go func() { done <- a.Relogin(context.Background(), id, "alice", "pw") }()
+	<-entered
+	if err := a.RemoveServer(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("relogin of a removed server succeeded")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, r := range revoked {
+		found = found || r == "/client/9 basic=true"
+	}
+	if !found {
+		t.Fatalf("the new client was leaked: %q", revoked)
+	}
+	if _, err := tokens.Get(id); err == nil {
+		t.Fatal("token stored for a removed server")
+	}
+}
+
+func TestAddServerRevokesTheClientWhenTheContextExpiresMidLogin(t *testing.T) {
+	var mu sync.Mutex
+	var revoked []string
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/version":
+			w.Write([]byte(`{"version":"2.0"}`))
+		case r.URL.Path == "/client" && r.Method == "POST":
+			w.Write([]byte(`{"id":9,"token":"newtok"}`))
+		case r.URL.Path == "/current/user":
+			close(started)
+			<-r.Context().Done()
+		case r.Method == "DELETE":
+			_, _, basic := r.BasicAuth()
+			mu.Lock()
+			revoked = append(revoked, fmt.Sprint(r.URL.Path, " basic=", basic))
+			mu.Unlock()
+		}
+	}))
+	defer srv.Close()
+	a, _, _ := newApp(t, &secret.Memory{})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-started; cancel() }()
+	if _, err := a.AddServer(ctx, ServerInput{URL: srv.URL, User: "alice", Pass: "pw"}); err == nil {
+		t.Fatal("expected the cancelled context to fail the add")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(revoked) != 1 || revoked[0] != "/client/9 basic=true" {
+		t.Fatalf("the new client was orphaned: %q", revoked)
+	}
+	if len(a.Snapshot().Servers) != 0 {
+		t.Fatal("server added despite the error")
 	}
 }
 
@@ -187,6 +382,14 @@ func TestServerLifecycleAgainstRealServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "reconnect", func() bool { sv, _ := a.Snapshot().Server(id); return sv.State == conn.Connected })
+	srv.API("POST", "/user", map[string]any{"name": "bob", "pass": "bobpass1", "admin": false}, nil)
+	err = a.Relogin(ctx, id, "bob", "bobpass1")
+	if err == nil || !strings.Contains(err.Error(), "This server was added as admin") {
+		t.Fatalf("relogin as another user: %v", err)
+	}
+	if sv, _ := a.st.Server(id); sv.UserName != harness.AdminUser || sv.UserID == 0 {
+		t.Fatalf("user not stored: %+v", sv)
+	}
 	if err := a.UpdateServer(ctx, id, "Renamed", false, nil); err != nil {
 		t.Fatal(err)
 	}

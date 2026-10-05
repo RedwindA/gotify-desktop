@@ -57,9 +57,28 @@ func New(baseURL, token string, opts Options) (*Client, error) {
 	return &Client{
 		base:  base,
 		token: token,
-		http:  &http.Client{Transport: tr, Timeout: timeout},
-		ws:    &http.Client{Transport: tr},
+		http:  &http.Client{Transport: tr, Timeout: timeout, CheckRedirect: checkRedirect},
+		ws:    &http.Client{Transport: tr, CheckRedirect: checkRedirect},
 	}, nil
+}
+
+const maxRedirects = 10
+
+// checkRedirect keeps the client token from leaving the server it belongs to
+// and refuses to follow an https server to plain http.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("gotify: stopped after %d redirects", maxRedirects)
+	}
+	first := via[0].URL
+	if first.Scheme == "https" && req.URL.Scheme != "https" {
+		return errors.New("gotify: refusing a redirect from https to http")
+	}
+	if req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
+		req.Header.Del("X-Gotify-Key")
+		req.Header.Del("Authorization")
+	}
+	return nil
 }
 
 func parseBase(raw string) (*url.URL, error) {
@@ -206,4 +225,19 @@ func (c *Client) DeleteClient(ctx context.Context, id uint) error {
 func (c *Client) Image(ctx context.Context, path string) (b []byte, err error) {
 	err = c.do(ctx, http.MethodGet, path, nil, &b)
 	return
+}
+
+// DeleteClientBasic deletes a client with the account's password, for the
+// session of a login that must be undone.
+func DeleteClientBasic(ctx context.Context, baseURL, user, pass string, clientID uint, opts Options) error {
+	c, err := New(baseURL, "", opts)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.endpoint("/client/"+strconv.FormatUint(uint64(clientID), 10), nil), nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(user, pass)
+	return doRequest(c.http, req, nil)
 }

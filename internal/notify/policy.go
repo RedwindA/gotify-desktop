@@ -14,6 +14,7 @@ import (
 
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
+	"gotify-desktop/internal/mdtext"
 	"gotify-desktop/internal/store"
 )
 
@@ -83,6 +84,8 @@ type Planned struct {
 	ServerID  int64
 	AppID     uint
 	MessageID uint
+	// MessageIDs are the messages a summary stands for.
+	MessageIDs []uint
 }
 
 const (
@@ -97,6 +100,7 @@ type burstKey struct {
 }
 
 type burstEntry struct {
+	id    uint
 	at    time.Time
 	line  string
 	level Level
@@ -168,7 +172,7 @@ func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]Ap
 				kept = append(kept, e)
 			}
 		}
-		st.entries = append(kept, burstEntry{now, headline(m, apps), level})
+		st.entries = append(kept, burstEntry{m.ID, now, headline(m, apps), level})
 		if st.suppressed {
 			continue
 		}
@@ -242,8 +246,10 @@ func individual(serverID int64, m gotify.Message, level Level, apps map[uint]sto
 
 func missedSummary(serverID int64, msgs []gotify.Message, apps map[uint]store.App) Planned {
 	var lines []string
+	var msgIDs []uint
 	level := LevelSilent
 	for i, m := range msgs {
+		msgIDs = append(msgIDs, m.ID)
 		l, _ := LevelFor(m.Priority)
 		level = max(level, l)
 		if i >= len(msgs)-summaryMaxLines {
@@ -258,7 +264,8 @@ func missedSummary(serverID int64, msgs []gotify.Message, apps map[uint]store.Ap
 			Group: fmt.Sprintf("s%d", serverID),
 			Level: level,
 		},
-		ServerID: serverID,
+		ServerID:   serverID,
+		MessageIDs: msgIDs,
 	}
 }
 
@@ -280,6 +287,10 @@ func burstSummary(key burstKey, entries []burstEntry, apps map[uint]store.App) P
 		level = max(level, e.level)
 	}
 	var lines []string
+	var msgIDs []uint
+	for _, e := range entries {
+		msgIDs = append(msgIDs, e.id)
+	}
 	for _, e := range entries[max(0, len(entries)-burstMaxLines):] {
 		lines = append(lines, e.line)
 	}
@@ -292,8 +303,9 @@ func burstSummary(key burstKey, entries []burstEntry, apps map[uint]store.App) P
 			Group:   fmt.Sprintf("s%d-a%d", key.server, key.app),
 			Level:   level,
 		},
-		ServerID: key.server,
-		AppID:    key.app,
+		ServerID:   key.server,
+		AppID:      key.app,
+		MessageIDs: msgIDs,
 	}
 }
 
@@ -346,7 +358,11 @@ func markdownToPlain(src string) string {
 		switch n := n.(type) {
 		case *ast.Text:
 			if entering {
-				sb.Write(n.Segment.Value(b))
+				if _, code := n.Parent().(*ast.CodeSpan); code {
+					sb.Write(n.Segment.Value(b))
+				} else {
+					sb.WriteString(mdtext.Decode(n.Segment.Value(b)))
+				}
 				if n.HardLineBreak() || n.SoftLineBreak() {
 					sb.WriteByte('\n')
 				}

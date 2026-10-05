@@ -15,7 +15,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var migrations = []string{`
+type migration struct {
+	sql string
+	// rebuildsTable migrations run with foreign keys off, as dropping a table
+	// that others reference would cascade otherwise.
+	rebuildsTable bool
+}
+
+var migrations = []migration{{sql: `
 CREATE TABLE servers(
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,
@@ -61,7 +68,28 @@ CREATE TABLE app_prefs(
 	PRIMARY KEY(server_id, app_id)
 );
 CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-`, `CREATE INDEX messages_date ON messages(date DESC, id DESC);`}
+`}, {sql: `CREATE INDEX messages_date ON messages(date DESC, id DESC);`}, {rebuildsTable: true, sql: `
+CREATE TABLE servers_new(
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	url TEXT NOT NULL,
+	insecure_skip_verify INTEGER NOT NULL DEFAULT 0,
+	ca_cert TEXT NOT NULL DEFAULT '',
+	client_id INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL,
+	user_id INTEGER NOT NULL DEFAULT 0,
+	user_name TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO servers_new(id,name,url,insecure_skip_verify,ca_cert,client_id,created_at) SELECT id,name,url,insecure_skip_verify,ca_cert,client_id,created_at FROM servers;
+DROP TABLE servers;
+ALTER TABLE servers_new RENAME TO servers;
+`}, {sql: `
+CREATE TABLE deleted_messages(
+	server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+	id INTEGER NOT NULL,
+	PRIMARY KEY(server_id, id)
+);
+`}, {sql: `ALTER TABLE server_state ADD COLUMN import_floor INTEGER NOT NULL DEFAULT 0;`}}
 
 type Store struct{ db *sql.DB }
 
@@ -95,23 +123,41 @@ func (s *Store) migrate() error {
 		return fmt.Errorf("store: database version %d is newer than supported %d", v, len(migrations))
 	}
 	for ; v < len(migrations); v++ {
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(migrations[v]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("store: migration %d: %w", v+1, err)
-		}
-		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", v+1)); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if err := s.apply(v); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Store) apply(v int) error {
+	m := migrations[v]
+	if m.rebuildsTable {
+		if _, err := s.db.Exec("PRAGMA foreign_keys=OFF"); err != nil {
+			return err
+		}
+		defer s.db.Exec("PRAGMA foreign_keys=ON")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(m.sql); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("store: migration %d: %w", v+1, err)
+	}
+	if m.rebuildsTable {
+		var violations int
+		if err := tx.QueryRow("SELECT count(*) FROM pragma_foreign_key_check").Scan(&violations); err != nil || violations > 0 {
+			tx.Rollback()
+			return fmt.Errorf("store: migration %d broke foreign keys (%v)", v+1, err)
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", v+1)); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) tx(f func(*sql.Tx) error) error {
@@ -134,15 +180,18 @@ type Server struct {
 	CACertPEM          string
 	ClientID           uint
 	CreatedAt          time.Time
+	// UserID and UserName are the account the server was added with.
+	UserID   uint
+	UserName string
 }
 
-const serverCols = "id, name, url, insecure_skip_verify, ca_cert, client_id, created_at"
+const serverCols = "id, name, url, insecure_skip_verify, ca_cert, client_id, created_at, user_id, user_name"
 
 type scanner interface{ Scan(...any) error }
 
 func scanServer(r scanner) (sv Server, err error) {
 	var created int64
-	err = r.Scan(&sv.ID, &sv.Name, &sv.URL, &sv.InsecureSkipVerify, &sv.CACertPEM, &sv.ClientID, &created)
+	err = r.Scan(&sv.ID, &sv.Name, &sv.URL, &sv.InsecureSkipVerify, &sv.CACertPEM, &sv.ClientID, &created, &sv.UserID, &sv.UserName)
 	sv.CreatedAt = time.UnixMilli(created)
 	return
 }
@@ -152,8 +201,8 @@ func (s *Store) AddServer(sv Server) (int64, error) {
 	if sv.CreatedAt.IsZero() {
 		sv.CreatedAt = time.Now()
 	}
-	res, err := s.db.Exec(`INSERT INTO servers(name,url,insecure_skip_verify,ca_cert,client_id,created_at) VALUES(?,?,?,?,?,?)`,
-		sv.Name, sv.URL, sv.InsecureSkipVerify, sv.CACertPEM, sv.ClientID, sv.CreatedAt.UnixMilli())
+	res, err := s.db.Exec(`INSERT INTO servers(name,url,insecure_skip_verify,ca_cert,client_id,created_at,user_id,user_name) VALUES(?,?,?,?,?,?,?,?)`,
+		sv.Name, sv.URL, sv.InsecureSkipVerify, sv.CACertPEM, sv.ClientID, sv.CreatedAt.UnixMilli(), sv.UserID, sv.UserName)
 	if err != nil {
 		return 0, err
 	}
@@ -161,8 +210,8 @@ func (s *Store) AddServer(sv Server) (int64, error) {
 }
 
 func (s *Store) UpdateServer(sv Server) error {
-	_, err := s.db.Exec(`UPDATE servers SET name=?,url=?,insecure_skip_verify=?,ca_cert=?,client_id=? WHERE id=?`,
-		sv.Name, sv.URL, sv.InsecureSkipVerify, sv.CACertPEM, sv.ClientID, sv.ID)
+	_, err := s.db.Exec(`UPDATE servers SET name=?,url=?,insecure_skip_verify=?,ca_cert=?,client_id=?,user_id=?,user_name=? WHERE id=?`,
+		sv.Name, sv.URL, sv.InsecureSkipVerify, sv.CACertPEM, sv.ClientID, sv.UserID, sv.UserName, sv.ID)
 	return err
 }
 
@@ -273,41 +322,84 @@ func (s *Store) LastSeen(serverID int64) (uint, bool, error) {
 	return id, init, err
 }
 
+// insertMessages stores msgs that are new and not deleted, and returns them with the highest id seen.
+func insertMessages(tx *sql.Tx, serverID int64, msgs []gotify.Message) (inserted []gotify.Message, maxID uint, err error) {
+	for _, m := range msgs {
+		maxID = max(maxID, m.ID)
+		extras := ""
+		if len(m.Extras) > 0 {
+			b, err := json.Marshal(m.Extras)
+			if err != nil {
+				return nil, 0, err
+			}
+			extras = string(b)
+		}
+		res, err := tx.Exec(`INSERT OR IGNORE INTO messages(server_id,id,app_id,title,message,priority,extras,date)
+SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_messages WHERE server_id=? AND id=?)`,
+			serverID, m.ID, m.AppID, m.Title, m.Message, m.Priority, extras, m.Date.UnixMilli(), serverID, m.ID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			inserted = append(inserted, m)
+		}
+	}
+	sort.Slice(inserted, func(i, j int) bool { return inserted[i].ID < inserted[j].ID })
+	return inserted, maxID, nil
+}
+
 // SaveMessages is the dedup point: it returns only newly inserted messages, ascending by id,
 // and advances last_seen_id in the same transaction.
 func (s *Store) SaveMessages(serverID int64, msgs []gotify.Message) ([]gotify.Message, error) {
 	var inserted []gotify.Message
 	err := s.tx(func(tx *sql.Tx) error {
-		inserted = nil
 		var maxID uint
-		for _, m := range msgs {
-			maxID = max(maxID, m.ID)
-			extras := ""
-			if len(m.Extras) > 0 {
-				b, err := json.Marshal(m.Extras)
-				if err != nil {
-					return err
-				}
-				extras = string(b)
-			}
-			res, err := tx.Exec(`INSERT OR IGNORE INTO messages(server_id,id,app_id,title,message,priority,extras,date) VALUES(?,?,?,?,?,?,?,?)`,
-				serverID, m.ID, m.AppID, m.Title, m.Message, m.Priority, extras, m.Date.UnixMilli())
-			if err != nil {
-				return err
-			}
-			if n, _ := res.RowsAffected(); n > 0 {
-				inserted = append(inserted, m)
-			}
+		var err error
+		if inserted, maxID, err = insertMessages(tx, serverID, msgs); err != nil {
+			return err
 		}
-		_, err := tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized) VALUES(?,?,1)
+		_, err = tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized) VALUES(?,?,1)
 ON CONFLICT(server_id) DO UPDATE SET last_seen_id=max(last_seen_id,excluded.last_seen_id), initialized=1`, serverID, maxID)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(inserted, func(i, j int) bool { return inserted[i].ID < inserted[j].ID })
 	return inserted, nil
+}
+
+// SaveInitialImport stores the first connection's messages in one transaction: those that arrived
+// live while the history loaded, and the history, below which nothing is imported (floor). Either
+// everything is saved and the server initialized, or nothing is.
+func (s *Store) SaveInitialImport(serverID int64, live, history []gotify.Message, floor uint) (insertedLive, insertedHistory []gotify.Message, err error) {
+	err = s.tx(func(tx *sql.Tx) error {
+		var maxLive, maxHist uint
+		var err error
+		if insertedLive, maxLive, err = insertMessages(tx, serverID, live); err != nil {
+			return err
+		}
+		if insertedHistory, maxHist, err = insertMessages(tx, serverID, history); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized,import_floor) VALUES(?,?,1,?)
+ON CONFLICT(server_id) DO UPDATE SET last_seen_id=max(last_seen_id,excluded.last_seen_id), initialized=1, import_floor=excluded.import_floor`,
+			serverID, max(maxLive, maxHist), floor)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return insertedLive, insertedHistory, nil
+}
+
+// ImportFloor is the smallest id the first import took; older messages were left out on purpose.
+func (s *Store) ImportFloor(serverID int64) (uint, error) {
+	var floor uint
+	err := s.db.QueryRow(`SELECT import_floor FROM server_state WHERE server_id=?`, serverID).Scan(&floor)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return floor, err
 }
 
 type StoredMessage struct {
@@ -381,9 +473,15 @@ func (s *Store) Messages(q MessageQuery) ([]StoredMessage, error) {
 	return out, rows.Err()
 }
 
+// DeleteMessage removes a message and remembers its id, so a late copy from the stream or a catch-up is not stored again.
 func (s *Store) DeleteMessage(serverID int64, id uint) error {
-	_, err := s.db.Exec(`DELETE FROM messages WHERE server_id=? AND id=?`, serverID, id)
-	return err
+	return s.tx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM messages WHERE server_id=? AND id=?`, serverID, id); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT OR IGNORE INTO deleted_messages(server_id,id) VALUES(?,?)`, serverID, id)
+		return err
+	})
 }
 
 func (s *Store) MarkRead(serverID int64, ids ...uint) error {

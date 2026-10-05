@@ -55,8 +55,7 @@ func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
 	}
-	startHidden := mygo.App.WasOpenedAtLogin() || notify.IsActivationLaunch(os.Args)
-	d := &desktop{startHidden: startHidden}
+	d := &desktop{activationLaunch: notify.IsActivationLaunch(os.Args)}
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
 		if !notify.IsActivationLaunch(args) {
 			d.showWindow()
@@ -76,7 +75,8 @@ func main() {
 }
 
 type desktop struct {
-	startHidden bool
+	activationLaunch bool
+	startHidden      bool
 
 	ctrl     *app.App
 	model    *view.Model
@@ -88,11 +88,13 @@ type desktop struct {
 	win        *mygo.Window
 	closing    atomic.Bool
 	dirty      atomic.Bool
+	trayDirty  atomic.Bool
 	trayState  string
 	pauseTimer *time.Timer
 }
 
 func (d *desktop) start() {
+	d.startHidden = d.activationLaunch || mygo.App.WasOpenedAtLogin()
 	dataDir, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
 		log.Fatal(err)
@@ -104,7 +106,7 @@ func (d *desktop) start() {
 	d.notifier, err = notify.New(appID, appName, cacheDir, appIcon)
 	if err != nil {
 		log.Printf("notifications unavailable: %v", err)
-		d.notifier, _ = notify.New("", appName, cacheDir, nil)
+		d.notifier = notify.Unsupported()
 	}
 	d.ctrl, err = app.New(app.Options{
 		DataDir: dataDir, CacheDir: cacheDir, Tokens: secret.Keyring(), Notifier: d.notifier,
@@ -131,7 +133,7 @@ func (d *desktop) start() {
 	mygo.Power.OnResume(d.ctrl.KickAll)
 	mygo.Power.OnUnlockScreen(d.ctrl.KickAll)
 	d.makeTray()
-	d.refreshTray()
+	d.requestTray()
 	if !d.startHidden {
 		d.showWindow()
 	}
@@ -185,7 +187,7 @@ func (d *desktop) onChange() {
 		return
 	}
 	d.invalidate()
-	go d.refreshTray()
+	go d.requestTray()
 }
 
 func (d *desktop) showWindow() {
@@ -288,8 +290,17 @@ func (d *desktop) setPause(until time.Time) {
 	}()
 }
 
-// refreshTray updates the icon, tooltip, menu and badge to the current state.
-func (d *desktop) refreshTray() {
+// requestTray asks for the tray to be brought up to date. Requests coalesce, and
+// the update runs on the main thread, one at a time, from the latest snapshot.
+func (d *desktop) requestTray() {
+	if d.closing.Load() || !d.trayDirty.CompareAndSwap(false, true) {
+		return
+	}
+	mygo.RunOnMain(d.applyTray)
+}
+
+func (d *desktop) applyTray() {
+	d.trayDirty.Store(false)
 	if d.ctrl == nil || d.closing.Load() {
 		return
 	}
@@ -317,7 +328,7 @@ func (d *desktop) refreshTray() {
 		d.pauseTimer = nil
 	}
 	if paused {
-		d.pauseTimer = time.AfterFunc(time.Until(snap.Settings.PausedUntil)+time.Second, d.refreshTray)
+		d.pauseTimer = time.AfterFunc(time.Until(snap.Settings.PausedUntil)+time.Second, d.requestTray)
 	}
 	d.mu.Unlock()
 	if !changed {

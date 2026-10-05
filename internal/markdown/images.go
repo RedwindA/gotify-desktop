@@ -1,8 +1,11 @@
 package markdown
 
 import (
+	"bytes"
 	"container/list"
 	"context"
+	"fmt"
+	"image"
 	"io"
 	"net/http"
 	"sync"
@@ -84,6 +87,24 @@ func (c *ImageCache) load(e *imageEntry) {
 	}
 }
 
+const (
+	maxSide   = 16384
+	maxPixels = 40_000_000
+)
+
+// DecodeBitmap decodes untrusted image data, refusing images whose size
+// would take too much memory before decoding any pixels.
+func DecodeBitmap(data []byte) (*ui.Bitmap, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxSide || cfg.Height > maxSide || cfg.Width*cfg.Height > maxPixels {
+		return nil, fmt.Errorf("image of %dx%d pixels is too large", cfg.Width, cfg.Height)
+	}
+	return ui.DecodeBitmap(data)
+}
+
 func (c *ImageCache) fetch(url string) *ui.Bitmap {
 	ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 	defer cancel()
@@ -103,7 +124,7 @@ func (c *ImageCache) fetch(url string) *ui.Bitmap {
 	if err != nil || len(data) > maxImageBytes {
 		return nil
 	}
-	bmp, err := ui.DecodeBitmap(data)
+	bmp, err := DecodeBitmap(data)
 	if err != nil {
 		return nil
 	}

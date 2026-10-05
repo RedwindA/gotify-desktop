@@ -11,6 +11,8 @@ import (
 	"github.com/yuin/goldmark/extension"
 	east "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+
+	"gotify-desktop/internal/mdtext"
 )
 
 type blockKind int
@@ -113,7 +115,7 @@ func paragraph(n ast.Node, src []byte, kind blockKind, level int) []block {
 		for c := n.FirstChild(); c != nil; c = c.NextSibling() {
 			switch c := c.(type) {
 			case *ast.Text:
-				cur = append(cur, inline{text: string(c.Segment.Value(src)), bold: st.bold, italic: st.italic, strike: st.strike, code: st.code, link: st.link})
+				cur = append(cur, inline{text: mdtext.Decode(c.Segment.Value(src)), bold: st.bold, italic: st.italic, strike: st.strike, code: st.code, link: st.link})
 				if c.HardLineBreak() || c.SoftLineBreak() {
 					cur = append(cur, inline{text: "\n"})
 				}

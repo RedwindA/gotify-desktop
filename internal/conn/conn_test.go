@@ -3,6 +3,7 @@ package conn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -374,4 +375,187 @@ func TestPongTimeoutDetectsDeadServer(t *testing.T) {
 		t.Fatal("backoff without error")
 	}
 	rec.wait(t, n, func(e Event) bool { return e.Kind == EventState && e.State == Connected })
+}
+
+func TestCatchUpIncludesMessagesBelowLastSeen(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 2, false)
+	s, rec, st := setup(t, f, Config{})
+	if _, err := st.SaveMessages(s.id, []gotify.Message{{ID: 2, AppID: 1, Message: "m2"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start()
+	e, _ := rec.wait(t, 0, isMsgs)
+	if !e.CatchUp || e.Silent || !reflect.DeepEqual(ids(e.Messages), []uint{1}) {
+		t.Fatalf("a message below last_seen that was never stored must be delivered: %+v", e)
+	}
+}
+
+func TestLiveMessageDuringFirstImportIsNotSilent(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 3, false)
+	var once sync.Once
+	f.onMessage = func() {
+		once.Do(func() {
+			go f.post(1, 1, true)
+			time.Sleep(150 * time.Millisecond)
+		})
+	}
+	s, rec, _ := setup(t, f, Config{})
+	s.Start()
+	live, n := rec.wait(t, 0, isMsgs)
+	if live.Silent || live.CatchUp || !reflect.DeepEqual(ids(live.Messages), []uint{4}) {
+		t.Fatalf("live message during the import: %+v", live)
+	}
+	hist, _ := rec.wait(t, n, isMsgs)
+	if !hist.Silent || !hist.CatchUp || !reflect.DeepEqual(ids(hist.Messages), []uint{1, 2, 3}) {
+		t.Fatalf("history: %+v", hist)
+	}
+	time.Sleep(200 * time.Millisecond)
+	count := 0
+	for _, e := range rec.snapshot() {
+		if isMsgs(e) {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("%d message events", count)
+	}
+}
+
+func TestDeletedMessageDoesNotComeBackThroughCatchUp(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 3, false)
+	s, rec, st := setup(t, f, Config{})
+	s.Start()
+	_, n := rec.wait(t, 0, isMsgs)
+	if err := st.DeleteMessage(s.id, 2); err != nil {
+		t.Fatal(err)
+	}
+	f.dropConns()
+	rec.wait(t, n, isState(Connected))
+	time.Sleep(300 * time.Millisecond)
+	for _, e := range rec.snapshot()[n:] {
+		if isMsgs(e) {
+			t.Fatalf("deleted message resurrected: %+v", e)
+		}
+	}
+}
+
+func TestDelayedLiveCopyOfDeletedMessageIsDropped(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 2, false)
+	s, rec, st := setup(t, f, Config{})
+	s.Start()
+	_, n := rec.wait(t, 0, isMsgs)
+	if err := st.DeleteMessage(s.id, 2); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(gotify.Message{ID: 2, AppID: 1, Message: "late copy", Date: time.Now()})
+	f.mu.Lock()
+	for c := range f.conns {
+		c.Write(context.Background(), websocket.MessageText, b)
+	}
+	f.mu.Unlock()
+	f.post(1, 1, true)
+	e, n := rec.wait(t, n, isMsgs)
+	if !reflect.DeepEqual(ids(e.Messages), []uint{3}) {
+		t.Fatalf("expected only the new message: %+v", e)
+	}
+	time.Sleep(150 * time.Millisecond)
+	for _, e := range rec.snapshot()[n:] {
+		if isMsgs(e) {
+			t.Fatalf("unexpected event %+v", e)
+		}
+	}
+}
+
+func TestReconnectDoesNotPullHistoryTheFirstImportLeftOut(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 5, false)
+	s, rec, st := setup(t, f, Config{ImportOnFirstConnect: 3})
+	s.Start()
+	e, n := rec.wait(t, 0, isMsgs)
+	if !e.Silent || !reflect.DeepEqual(ids(e.Messages), []uint{3, 4, 5}) {
+		t.Fatalf("%+v", e)
+	}
+	f.dropConns()
+	_, n = rec.wait(t, n, isState(Connected))
+	time.Sleep(300 * time.Millisecond)
+	for _, ev := range rec.snapshot()[n:] {
+		if isMsgs(ev) {
+			t.Fatalf("history left out of the import was announced: %+v", ev)
+		}
+	}
+	if old, _ := st.Messages(store.MessageQuery{ServerID: s.id}); len(old) != 3 {
+		t.Fatalf("%d stored", len(old))
+	}
+}
+
+type failingImportStore struct {
+	*store.Store
+	failed       chan struct{}
+	initializedA bool
+}
+
+func (f *failingImportStore) SaveInitialImport(serverID int64, live, history []gotify.Message, floor uint) ([]gotify.Message, []gotify.Message, error) {
+	select {
+	case <-f.failed:
+	default:
+		close(f.failed)
+		_, f.initializedA, _ = f.Store.LastSeen(serverID)
+		return nil, nil, errors.New("disk full")
+	}
+	return f.Store.SaveInitialImport(serverID, live, history, floor)
+}
+
+func TestFailedFirstImportStaysUninitializedAndRetriesSilently(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 3, false)
+	st, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	t.Cleanup(func() { st.Close() })
+	sid, _ := st.AddServer(store.Server{Name: "t", URL: f.URL})
+	fs := &failingImportStore{Store: st, failed: make(chan struct{})}
+	c, _ := gotify.New(f.URL, "tok", gotify.Options{})
+	rec := newRecorder()
+	s := New(sid, c, fs, rec.sink, Config{MinBackoff: 20 * time.Millisecond})
+	t.Cleanup(s.Stop)
+	s.Start()
+	rec.wait(t, 0, isState(Backoff))
+	if fs.initializedA {
+		t.Fatal("initialized before the import was saved")
+	}
+	e, _ := rec.wait(t, 0, isMsgs)
+	if !e.Silent || !e.CatchUp || !reflect.DeepEqual(ids(e.Messages), []uint{1, 2, 3}) {
+		t.Fatalf("the retry must import silently: %+v", e)
+	}
+	for _, ev := range rec.snapshot() {
+		if isMsgs(ev) && !ev.Silent {
+			t.Fatalf("history announced: %+v", ev)
+		}
+	}
+}
+
+func TestCatchUpOverlapDoesNotDependOnPageAlignment(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 10, false)
+	s, rec, st := setup(t, f, Config{PageSize: 5})
+	// last_seen=6 sits at the end of the first page (10..6); 5 was never stored.
+	if _, err := st.SaveMessages(s.id, []gotify.Message{{ID: 6, AppID: 1, Message: "m6"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Start()
+	var got []uint
+	var n int
+	for len(got) < 9 {
+		var e Event
+		e, n = rec.wait(t, n, isMsgs)
+		if !e.CatchUp || e.Silent {
+			t.Fatalf("%+v", e)
+		}
+		got = append(got, ids(e.Messages)...)
+	}
+	if !reflect.DeepEqual(got, []uint{1, 2, 3, 4, 5, 7, 8, 9, 10}) {
+		t.Fatalf("got %v", got)
+	}
 }

@@ -61,6 +61,11 @@ func setup(t *testing.T, httpc *http.Client) (*Dispatcher, *fakeNotifier, *store
 	st.ReplaceApps(sid, []gotify.Application{{ID: 1, Name: "Backup", Image: "image/a.png"}, {ID: 2, Name: "Muted"}})
 	st.SetAppImage(sid, 1, png1x1)
 	st.SetAppPref(sid, 2, store.AppPref{Muted: true})
+	var seeded []gotify.Message
+	for i := uint(1); i <= 20; i++ {
+		seeded = append(seeded, gotify.Message{ID: i, AppID: 1, Date: time.Now()})
+	}
+	st.SaveMessages(sid, seeded)
 	fn := newFakeNotifier()
 	cache := t.TempDir()
 	d := NewDispatcher(fn, st, DefaultSettings, cache, httpc)
@@ -155,5 +160,69 @@ func TestDispatcherSummaryAndClose(t *testing.T) {
 	}
 	if a, _, m, k := d.Activated("s1-m5"); a != 1 || m != 5 || k != KindMessage {
 		t.Fatal("Activated")
+	}
+}
+
+func TestDispatcherSkipsDeletedAndReadMessages(t *testing.T) {
+	d, fn, st, sid, _ := setup(t, nil)
+	st.DeleteMessage(sid, 1)
+	st.MarkRead(sid, 2)
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(1, 1, 5, "deleted", ""), msg(2, 1, 5, "read", ""), msg(3, 1, 5, "fresh", "")}})
+	got := fn.wait(t, 1)
+	time.Sleep(100 * time.Millisecond)
+	if len(fn.got) != 1 || got[0].Title != "fresh" {
+		t.Fatalf("%+v", fn.got)
+	}
+	st.DeleteServer(sid)
+	var many []gotify.Message
+	for i := uint(1); i <= 5; i++ {
+		many = append(many, msg(i, 1, 5, "t", ""))
+	}
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: many})
+	time.Sleep(150 * time.Millisecond)
+	if len(fn.got) != 1 {
+		t.Fatalf("summary for a removed server shown: %+v", fn.got)
+	}
+}
+
+func TestDispatcherDoesNotShowAfterReadDuringImageDownload(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-release
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png1x1)
+	}))
+	defer srv.Close()
+	d, fn, st, sid, _ := setup(t, srv.Client())
+	m := msg(1, 1, 5, "slow image", "")
+	m.Extras = map[string]any{"client::notification": map[string]any{"bigImageUrl": srv.URL + "/x.png"}}
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{m}})
+	<-entered
+	st.MarkRead(sid, 1)
+	close(release)
+	time.Sleep(300 * time.Millisecond)
+	if len(fn.got) != 0 {
+		t.Fatalf("shown after being read: %+v", fn.got)
+	}
+}
+
+func TestDispatcherDropsStaleMessagesBeforePlanning(t *testing.T) {
+	d, fn, st, sid, _ := setup(t, nil)
+	st.MarkRead(sid, 1, 2, 3, 4)
+	var four []gotify.Message
+	for i := uint(1); i <= 4; i++ {
+		four = append(four, msg(i, 1, 5, "t", ""))
+	}
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: four})
+	time.Sleep(200 * time.Millisecond)
+	if len(fn.got) != 0 {
+		t.Fatalf("summary of read messages shown: %+v", fn.got)
+	}
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: append(four, msg(5, 1, 5, "only fresh", ""))})
+	got := fn.wait(t, 1)
+	if len(got) != 1 || got[0].ID != "s1-m5" {
+		t.Fatalf("one fresh message should be shown on its own: %+v", got)
 	}
 }

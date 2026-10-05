@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -92,6 +94,7 @@ type Model struct {
 	hlUntil   time.Time
 	scrollTo  msgKey
 	markBusy  bool
+	markDelay time.Duration
 	nextTick  time.Time
 
 	dlg       dialog
@@ -101,6 +104,8 @@ type Model struct {
 	settings    notify.Settings
 	settingsGen uint64
 	saving      int
+	saveRev     atomic.Int64
+	saveMu      sync.Mutex
 	dndStart    time.Time
 	dndEnd      time.Time
 	atLogin     bool
@@ -112,7 +117,7 @@ func New(be Backend, plat Platform, images *markdown.ImageCache) *Model {
 		plat.Now = time.Now
 	}
 	return &Model{
-		be: be, plat: plat, md: markdown.New(images), limit: pageSize, sidebarW: 280,
+		be: be, plat: plat, md: markdown.New(images), limit: pageSize, sidebarW: 280, markDelay: 1200 * time.Millisecond,
 		bitmaps: map[string]*ui.Bitmap{}, deleting: map[msgKey]bool{},
 	}
 }
@@ -150,7 +155,7 @@ func (m *Model) bitmap(serverID int64, a app.AppInfo) *ui.Bitmap {
 	if b, ok := m.bitmaps[key]; ok {
 		return b
 	}
-	b, err := ui.DecodeBitmap(a.Image)
+	b, err := markdown.DecodeBitmap(a.Image)
 	if err != nil {
 		b = nil
 	}
@@ -263,30 +268,54 @@ func (m *Model) loadMore() {
 	}
 }
 
-// markVisibleRead marks the loaded messages read a moment after they show to a focused window.
+// markVisibleRead marks the messages on screen read a moment after they show to a focused
+// window, if the same view is still shown and focused when the moment is over.
 func (m *Model) markVisibleRead() {
-	if m.markBusy || !m.focused() {
+	if m.markBusy || m.page != pageMessages || !m.focused() {
 		return
 	}
-	byServer := map[int64][]uint{}
-	for _, msg := range m.msgs {
+	cand := map[msgKey]bool{}
+	m.eachVisible(func(msg store.StoredMessage) {
 		if !msg.Read {
-			byServer[msg.ServerID] = append(byServer[msg.ServerID], msg.ID)
+			cand[msgKey{msg.ServerID, msg.ID}] = true
 		}
-	}
-	if len(byServer) == 0 {
+	})
+	if len(cand) == 0 {
 		return
 	}
 	m.markBusy = true
-	m.async(func() {
-		time.Sleep(1200 * time.Millisecond)
-		if m.focused() {
-			for server, ids := range byServer {
-				m.be.MarkRead(server, ids...)
+	sc, query, delay := m.scope, m.query, m.markDelay
+	go func() {
+		time.Sleep(delay)
+		m.update(func() {
+			m.markBusy = false
+			if m.page != pageMessages || m.scope != sc || m.query != query || !m.focused() {
+				return
 			}
-		}
-		m.update(func() { m.markBusy = false })
-	})
+			byServer := map[int64][]uint{}
+			m.eachVisible(func(msg store.StoredMessage) {
+				if !msg.Read && cand[msgKey{msg.ServerID, msg.ID}] {
+					byServer[msg.ServerID] = append(byServer[msg.ServerID], msg.ID)
+				}
+			})
+			if len(byServer) > 0 {
+				m.async(func() {
+					for server, ids := range byServer {
+						m.be.MarkRead(server, ids...)
+					}
+				})
+			}
+		})
+	}()
+}
+
+// eachVisible calls fn for the messages the list shows now.
+func (m *Model) eachVisible(fn func(store.StoredMessage)) {
+	first, last := m.list.Visible()
+	last = min(last, len(m.msgs)-1)
+	for i := max(first, 0); i <= last; i++ {
+		fn(m.msgs[i])
+	}
 }
 
 func (m *Model) markScopeRead(snap *app.Snapshot) {
@@ -342,11 +371,19 @@ func (m *Model) syncSettings(snap *app.Snapshot) {
 	}
 }
 
+// saveSettings writes the settings on another goroutine. Writes are serialized and a
+// write that a newer one superseded is skipped, so the last edit always wins.
 func (m *Model) saveSettings() {
 	s := m.settings
+	rev := m.saveRev.Add(1)
 	m.saving++
 	m.async(func() {
-		err := m.be.SetSettings(s)
+		m.saveMu.Lock()
+		var err error
+		if rev == m.saveRev.Load() {
+			err = m.be.SetSettings(s)
+		}
+		m.saveMu.Unlock()
 		m.update(func() {
 			m.saving--
 			if err != nil {

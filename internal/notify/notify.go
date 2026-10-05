@@ -86,6 +86,9 @@ func (a *activator) fire(id string) {
 	}
 }
 
+// Unsupported returns a notifier that shows nothing: Show fails with ErrUnsupported.
+func Unsupported() Notifier { return unsupported{} }
+
 type unsupported struct{}
 
 func (unsupported) Supported() bool         { return false }

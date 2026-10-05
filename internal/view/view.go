@@ -62,7 +62,6 @@ func (m *Model) welcome(c *ui.Context) {
 func (m *Model) messagesPage(c *ui.Context, snap *app.Snapshot) {
 	t := c.Theme()
 	m.refreshMessages(snap)
-	m.markVisibleRead()
 	unread := m.scopeUnread(snap)
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Gap(12).Padding(14, 20).AlignItems(ui.Center).Children(func() {
@@ -85,6 +84,7 @@ func (m *Model) messagesPage(c *ui.Context, snap *app.Snapshot) {
 			}
 		})
 	})
+	m.markVisibleRead()
 	if k := m.scrollTo; k != (msgKey{}) {
 		if i := m.indexOf(k); i >= 0 {
 			m.list.ScrollTo(i, ui.Center)

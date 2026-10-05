@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"gotify-desktop/internal/conn"
+	"gotify-desktop/internal/gotify"
 	"gotify-desktop/internal/store"
 )
 
@@ -124,9 +125,22 @@ func (d *Dispatcher) process(ev conn.Event) {
 		}
 		prefs[m.AppID] = AppPrefs{Muted: p.Muted, MinPriority: p.MinPriority}
 	}
+	var fresh []gotify.Message
+	for _, m := range ev.Messages {
+		if d.pending(ev.ServerID, m.ID) {
+			fresh = append(fresh, m)
+		}
+	}
+	if len(fresh) == 0 {
+		return
+	}
+	ev.Messages = fresh
 	for _, p := range d.planner.Plan(ev, apps, prefs, d.settings(), time.Now()) {
 		if d.ctx.Err() != nil {
 			return
+		}
+		if !d.stillRelevant(p) {
+			continue
 		}
 		n := p.Notification
 		if a, ok := apps[p.AppID]; ok && p.AppID != 0 {
@@ -135,10 +149,39 @@ func (d *Dispatcher) process(ev conn.Event) {
 		if p.ImageURL != "" {
 			n.ImagePath = d.downloadImage(p.ImageURL)
 		}
+		if d.ctx.Err() != nil || !d.stillRelevant(p) {
+			continue
+		}
 		if err := d.n.Show(n); err != nil {
 			log.Printf("notify: show %s: %v", n.ID, err)
 		}
 	}
+}
+
+// stillRelevant re-checks the store: a message deleted or read while the
+// notification waited is not shown, nor is a summary of a removed server.
+// pending reports whether a message is still stored and unread.
+func (d *Dispatcher) pending(serverID int64, id uint) bool {
+	msgs, err := d.st.Messages(store.MessageQuery{ServerID: serverID, ID: id, Limit: 1})
+	return err == nil && len(msgs) == 1 && !msgs[0].Read
+}
+
+// stillRelevant re-checks the store: a message deleted or read while the notification
+// waited is not shown, nor is a summary none of whose messages remain, or one of a removed server.
+func (d *Dispatcher) stillRelevant(p Planned) bool {
+	switch {
+	case p.MessageID != 0:
+		return d.pending(p.ServerID, p.MessageID)
+	case len(p.MessageIDs) > 0:
+		for _, id := range p.MessageIDs {
+			if d.pending(p.ServerID, id) {
+				return true
+			}
+		}
+		return false
+	}
+	_, err := d.st.Server(p.ServerID)
+	return err == nil
 }
 
 func imageExt(data []byte) string {
