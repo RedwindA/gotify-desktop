@@ -2,7 +2,7 @@
   "name": "Gotify Desktop",
   "identifier": "com.austin.gotifydesktop",
   "version": "0.1.0",
-  "copyright": "Gotify Desktop",
+  "copyright": "Copyright © 2026 RedwindA",
   "devUrl": "http://localhost:5173",
   "devCommand": "bun run --cwd frontend dev",
   "buildCommand": "bun run --cwd frontend build",
