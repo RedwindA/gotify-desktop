@@ -84,13 +84,28 @@ body {
   padding-top: min(var(--mygo-titlebar-height, 0px), calc(var(--mygo-titlebar-inset-left, 0px) * 100));
 }
 
-/* The image of a message (bigImageUrl), at its size up to the card's width. */
+/* The image of a message (bigImageUrl), at its own proportions, no wider than
+   the card nor taller than 360px. align-self keeps the column from stretching it. */
 .msg-image {
   display: block;
+  align-self: flex-start;
+  width: auto;
+  height: auto;
   max-width: 100%;
   max-height: 360px;
+  object-fit: contain;
   border-radius: 8px;
-  cursor: pointer;
+  cursor: zoom-in;
+}
+
+.msg-card .astryx-markdown img {
+  cursor: zoom-in;
+}
+
+/* The image viewer starts below the window controls, which the page has under it. */
+.astryx-lightbox > div {
+  margin-top: var(--mygo-titlebar-height, 0px);
+  height: calc(100% - var(--mygo-titlebar-height, 0px)) !important;
 }
 
 .msg-image-loading {
