@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -11,6 +12,33 @@ import (
 const service = "gotify-desktop"
 
 var ErrNotFound = errors.New("secret: not found")
+
+// ErrUnavailable is returned when the OS credential store does not answer in
+// time, as a Secret Service that D-Bus cannot start never does.
+var ErrUnavailable = errors.New("the system keyring did not answer")
+
+// timeout bounds every call to the OS credential store.
+var timeout = 15 * time.Second
+
+// bounded runs f, giving up after timeout. A call that never returns keeps its goroutine.
+func bounded[T any](f func() (T, error)) (T, error) {
+	type result struct {
+		v   T
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		v, err := f()
+		ch <- result{v, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.v, r.err
+	case <-time.After(timeout):
+		var zero T
+		return zero, ErrUnavailable
+	}
+}
 
 type Tokens interface {
 	Get(serverID int64) (string, error)
@@ -26,17 +54,20 @@ func Keyring() Tokens { return keyringTokens{} }
 func user(id int64) string { return fmt.Sprintf("server-%d", id) }
 
 func (keyringTokens) Get(id int64) (string, error) {
-	v, err := keyring.Get(service, user(id))
+	v, err := bounded(func() (string, error) { return keyring.Get(service, user(id)) })
 	if errors.Is(err, keyring.ErrNotFound) {
 		return "", ErrNotFound
 	}
 	return v, err
 }
 
-func (keyringTokens) Set(id int64, token string) error { return keyring.Set(service, user(id), token) }
+func (keyringTokens) Set(id int64, token string) error {
+	_, err := bounded(func() (struct{}, error) { return struct{}{}, keyring.Set(service, user(id), token) })
+	return err
+}
 
 func (keyringTokens) Delete(id int64) error {
-	err := keyring.Delete(service, user(id))
+	_, err := bounded(func() (struct{}, error) { return struct{}{}, keyring.Delete(service, user(id)) })
 	if errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}

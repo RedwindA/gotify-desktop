@@ -1,4 +1,4 @@
-package view
+package api
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 
 	"gotify-desktop/internal/app"
 	"gotify-desktop/internal/conn"
+	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/store"
 )
 
-// FakeBackend is an in-memory Backend, for tests and screenshots.
+// FakeBackend is an in-memory Backend, for tests and previews.
 type FakeBackend struct {
 	mu       sync.Mutex
 	Servers  []app.ServerInfo
@@ -22,11 +23,13 @@ type FakeBackend struct {
 	AddErr, DeleteErr error
 	// OnSetSettings runs before SetSettings stores, to slow a call down.
 	OnSetSettings func(notify.Settings)
-	Added         []app.ServerInput
-	Deleted       []uint
-	Tested        atomic.Int32
-	snap          atomic.Pointer[app.Snapshot]
-	gen           uint64
+	// OnChange runs after every change, like app.Options.OnChange; it must not block.
+	OnChange func()
+	Added    []app.ServerInput
+	Deleted  []uint
+	Tested   atomic.Int32
+	snap     atomic.Pointer[app.Snapshot]
+	gen      uint64
 }
 
 func NewFakeBackend() *FakeBackend {
@@ -64,6 +67,9 @@ func (f *FakeBackend) refresh() {
 		snap.Servers = append(snap.Servers, sv)
 	}
 	f.snap.Store(snap)
+	if f.OnChange != nil {
+		f.OnChange()
+	}
 }
 
 func (f *FakeBackend) Snapshot() *app.Snapshot { return f.snap.Load() }
@@ -188,6 +194,7 @@ func (f *FakeBackend) SetSettings(s notify.Settings) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Settings = s
+	i18n.SetPreference(s.Language)
 	f.refresh()
 	return nil
 }

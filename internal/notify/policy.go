@@ -14,6 +14,7 @@ import (
 
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
+	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/mdtext"
 	"gotify-desktop/internal/store"
 )
@@ -26,9 +27,11 @@ type AppPrefs struct {
 // Settings holds the global notification policy. Zero BurstWindow, BurstMax
 // and CatchUpSummaryOver select the defaults; HighBypassesDND is used as is.
 type Settings struct {
-	PausedUntil        time.Time
-	DND                bool
-	DNDStart, DNDEnd   int // minutes of day; the window may wrap midnight
+	PausedUntil      time.Time
+	DND              bool
+	DNDStart, DNDEnd int // minutes of day; the window may wrap midnight
+	// Language is the language the app shows: "en", "zh-CN", or "" to follow the system.
+	Language           string
 	HighBypassesDND    bool
 	BurstWindow        time.Duration
 	BurstMax           int
@@ -259,7 +262,7 @@ func missedSummary(serverID int64, msgs []gotify.Message, apps map[uint]store.Ap
 	return Planned{
 		Notification: Notification{
 			ID:    fmt.Sprintf("s%d-missed", serverID),
-			Title: fmt.Sprintf("%d missed messages", len(msgs)),
+			Title: i18n.T("%d missed messages", len(msgs)),
 			Body:  strings.Join(lines, "\n"),
 			Group: fmt.Sprintf("s%d", serverID),
 			Level: level,
@@ -297,7 +300,7 @@ func burstSummary(key burstKey, entries []burstEntry, apps map[uint]store.App) P
 	return Planned{
 		Notification: Notification{
 			ID:      fmt.Sprintf("s%d-a%d-burst", key.server, key.app),
-			Title:   fmt.Sprintf("%d new messages from %s", len(entries), name),
+			Title:   i18n.T("%d new messages from %s", len(entries), name),
 			Body:    strings.Join(lines, "\n"),
 			AppName: name,
 			Group:   fmt.Sprintf("s%d-a%d", key.server, key.app),

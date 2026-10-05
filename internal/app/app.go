@@ -17,6 +17,7 @@ import (
 
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
+	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/secret"
 	"gotify-desktop/internal/store"
@@ -174,23 +175,47 @@ func (a *App) clientFor(sv store.Server, token string) (*gotify.Client, error) {
 	return gotify.New(sv.URL, token, gotify.Options{InsecureSkipVerify: sv.InsecureSkipVerify, CACertPEM: []byte(sv.CACertPEM)})
 }
 
+// startServer adds a server's runtime and connects it in the background: its
+// token comes from the OS keyring, which may be slow to answer or never answer.
 func (a *App) startServer(sv store.Server) {
-	rt := &runtime{sv: sv}
-	var sup *conn.Supervisor
-	if token, err := a.opts.Tokens.Get(sv.ID); err != nil || token == "" {
-		rt.noToken, rt.state, rt.err = true, conn.AuthFailed, gotify.ErrUnauthorized
-	} else if client, err := a.clientFor(sv, token); err != nil {
-		rt.state, rt.err = conn.Disconnected, err
-	} else {
-		sup = conn.New(sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
-		rt.sup = sup
-	}
+	rt := &runtime{sv: sv, state: conn.Connecting}
 	a.mu.Lock()
 	a.servers[sv.ID] = rt
+	a.mu.Unlock()
+	go a.connect(sv.ID, rt)
+}
+
+// connect reads a server's token and starts its supervisor, unless the server
+// was removed or Relogin started one meanwhile.
+func (a *App) connect(id int64, rt *runtime) {
+	token, err := a.opts.Tokens.Get(id)
+	rt.op.Lock()
+	defer rt.op.Unlock()
+	a.mu.Lock()
+	if a.closed || a.servers[id] != rt || rt.sup != nil {
+		a.mu.Unlock()
+		return
+	}
+	var sup *conn.Supervisor
+	switch {
+	case errors.Is(err, secret.ErrNotFound), err == nil && token == "":
+		rt.noToken, rt.state, rt.err = true, conn.AuthFailed, gotify.ErrUnauthorized
+	case err != nil:
+		rt.state, rt.err = conn.Disconnected, errors.New(i18n.T("Can't read the token from the system keyring: %v", err))
+	default:
+		if client, cerr := a.clientFor(rt.sv, token); cerr != nil {
+			rt.state, rt.err = conn.Disconnected, cerr
+		} else {
+			sup = conn.New(rt.sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
+			rt.sup = sup
+		}
+	}
 	a.mu.Unlock()
 	if sup != nil {
 		sup.Start()
 	}
+	a.rebuild(false)
+	a.changed()
 }
 
 func (a *App) sink(ev conn.Event) {
@@ -315,7 +340,7 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 		return 0, err
 	}
 	if ver.Version == "" {
-		return 0, errors.New("this does not look like a Gotify server")
+		return 0, errors.New(i18n.T("This does not look like a Gotify server."))
 	}
 	token, clientID, err := gotify.Login(ctx, in.URL, in.User, in.Pass, clientName(),
 		gotify.Options{InsecureSkipVerify: in.Insecure, CACertPEM: in.CACertPEM})
@@ -340,7 +365,7 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 	sv.ID = id
 	if err := a.opts.Tokens.Set(id, token); err != nil {
 		a.st.DeleteServer(id)
-		return 0, fmt.Errorf("storing the token: %w", err)
+		return 0, errors.New(i18n.T("Couldn't store the token: %v", err))
 	}
 	a.startServer(sv)
 	a.rebuild(false)
@@ -417,7 +442,7 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	}
 	if v.sv.UserID != 0 && me.ID != v.sv.UserID {
 		revokeLogin(v.sv.URL, user, pass, clientID, opts)
-		return fmt.Errorf("This server was added as %s. Remove it and add it again to use another account.", v.sv.UserName)
+		return errors.New(i18n.T("This server was added as %s. Remove it and add it again to use another account.", v.sv.UserName))
 	}
 	v.rt.op.Lock()
 	defer v.rt.op.Unlock()
@@ -429,7 +454,7 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	}
 	v = cur
 	if err := a.opts.Tokens.Set(serverID, token); err != nil {
-		return fmt.Errorf("storing the token: %w", err)
+		return errors.New(i18n.T("Couldn't store the token: %v", err))
 	}
 	sv := v.sv
 	sv.ClientID, sv.UserID, sv.UserName = clientID, me.ID, me.Name
@@ -581,6 +606,7 @@ func (a *App) loadSettings() notify.Settings {
 	if raw, _ := a.st.GetSetting(settingsKey); raw != "" {
 		json.Unmarshal([]byte(raw), &s)
 	}
+	i18n.SetPreference(s.Language)
 	return s
 }
 
@@ -595,6 +621,7 @@ func (a *App) SetSettings(s notify.Settings) error {
 		return err
 	}
 	a.settings.Store(&s)
+	i18n.SetPreference(s.Language)
 	a.rebuild(false)
 	a.changed()
 	return nil
@@ -638,6 +665,6 @@ func (a *App) HandleActivation(id string) Activation {
 // Test sends a sample notification through the notifier.
 func (a *App) Test() error {
 	return a.opts.Notifier.Show(notify.Notification{
-		ID: "test", Title: "Gotify Desktop", Body: "Notifications work.", AppName: "Gotify Desktop", Level: notify.LevelNormal,
+		ID: "test", Title: "Gotify Desktop", Body: i18n.T("Notifications work."), AppName: "Gotify Desktop", Level: notify.LevelNormal,
 	})
 }

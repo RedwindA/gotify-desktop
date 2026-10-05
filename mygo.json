@@ -2,5 +2,11 @@
   "name": "Gotify Desktop",
   "identifier": "com.austin.gotifydesktop",
   "version": "0.1.0",
-  "copyright": "Gotify Desktop"
+  "copyright": "Gotify Desktop",
+  "devUrl": "http://localhost:5173",
+  "devCommand": "bun run --cwd frontend dev",
+  "buildCommand": "bun run --cwd frontend build",
+  "frontendDist": "frontend/dist",
+  "bindings": "frontend/src/mygo.ts",
+  "out": "build"
 }

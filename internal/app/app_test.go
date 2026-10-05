@@ -82,9 +82,63 @@ func TestMissingTokenNeedsLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer a.Close()
+	eventually(t, "the token lookup", func() bool {
+		sv, _ := a.Snapshot().Server(id)
+		return sv.State != conn.Connecting
+	})
 	sv, ok := a.Snapshot().Server(id)
 	if !ok || sv.State != conn.AuthFailed || !sv.NeedLogin || sv.Err == "" {
 		t.Fatalf("%+v", sv)
+	}
+}
+
+// stuckTokens is a keyring that does not answer until released, then fails.
+type stuckTokens struct {
+	secret.Memory
+	release chan struct{}
+}
+
+func (s *stuckTokens) Get(int64) (string, error) {
+	<-s.release
+	return "", secret.ErrUnavailable
+}
+
+func TestStartupDoesNotWaitForTheKeyring(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(dir + "/gotify.db")
+	id, _ := st.AddServer(store.Server{Name: "x", URL: "http://127.0.0.1:1"})
+	st.Close()
+	tokens := &stuckTokens{release: make(chan struct{})}
+	var changes atomic.Int32
+	done := make(chan *App, 1)
+	go func() {
+		a, err := New(Options{DataDir: dir, CacheDir: t.TempDir(), Tokens: tokens, Notifier: &fakeNotifier{}, OnChange: func() { changes.Add(1) }})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- a
+	}()
+	var a *App
+	select {
+	case a = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("New waited for the keyring")
+	}
+	defer a.Close()
+	if sv, _ := a.Snapshot().Server(id); sv.State != conn.Connecting {
+		t.Fatalf("while the keyring is silent: %+v", sv)
+	}
+	close(tokens.release)
+	eventually(t, "the keyring error", func() bool {
+		sv, _ := a.Snapshot().Server(id)
+		return sv.State == conn.Disconnected
+	})
+	sv, _ := a.Snapshot().Server(id)
+	if sv.NeedLogin || !strings.Contains(sv.Err, "keyring") {
+		t.Fatalf("a keyring that fails is not a wrong password: %+v", sv)
+	}
+	if changes.Load() == 0 {
+		t.Fatal("the change was not reported")
 	}
 }
 

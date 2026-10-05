@@ -1,4 +1,4 @@
-package view
+package api
 
 import (
 	"bytes"
@@ -68,4 +68,21 @@ func Demo(imageURL string) *FakeBackend {
 	}
 	f.Refresh()
 	return f
+}
+
+// DemoChart is the image of the demo's chart message, a PNG.
+func DemoChart() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 480, 160))
+	for x := 0; x < 480; x++ {
+		for y := 0; y < 160; y++ {
+			img.Set(x, y, color.RGBA{uint8(30 + y/2), uint8(90 + x/6), 200, 255})
+		}
+		y := 80 + int(40*float64((x*7)%97-48)/48)
+		for d := -1; d <= 1; d++ {
+			img.Set(x, y+d, color.RGBA{255, 255, 255, 255})
+		}
+	}
+	var b bytes.Buffer
+	png.Encode(&b, img)
+	return b.Bytes()
 }

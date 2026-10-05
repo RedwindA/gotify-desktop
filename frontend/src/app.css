@@ -1,0 +1,59 @@
+/* What the components do not cover. Colors and sizes come from the theme's tokens. */
+
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-background-body);
+  font-family: var(--font-family-body);
+}
+
+/* Stack children that should take the room left in their row. */
+.grow,
+.page-title,
+.msg-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.no-shrink {
+  flex-shrink: 0;
+}
+
+.msg-card {
+  transition: box-shadow 0.3s ease, opacity 0.2s ease;
+}
+
+.msg-highlight {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
+.msg-deleting {
+  opacity: 0.5;
+}
+
+.msg-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg-plain a {
+  color: var(--color-accent);
+}
+
+/* Message images never overflow their card. */
+.msg-card img {
+  max-width: 100%;
+  height: auto;
+}
+
+.selectable {
+  user-select: text;
+}
