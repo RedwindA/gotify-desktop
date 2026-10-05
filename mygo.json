@@ -8,5 +8,9 @@
   "buildCommand": "bun run --cwd frontend build",
   "frontendDist": "frontend/dist",
   "bindings": "frontend/src/mygo.ts",
-  "out": "build"
+  "out": "build",
+  "updates": {
+    "publicKey": "d0Z9PhnW+ou2fiElZpqN45zyO8VlQon0lx8F/aNoGAg=",
+    "github": "RedwindA/gotify-desktop"
+  }
 }

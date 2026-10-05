@@ -70,6 +70,7 @@ var chinese = map[string]string{
 	"Pause notifications for 1 hour":      "暂停通知 1 小时",
 	"Resume notifications":                "恢复通知",
 	"Quit":                                "退出",
+	"Check for Updates…":                  "检查更新…",
 	"Gotify Desktop — no unread messages": "Gotify Desktop — 没有未读消息",
 	"Gotify Desktop — %d unread":          "Gotify Desktop — %d 条未读",
 	" (a server is offline)":              "（有服务器离线）",

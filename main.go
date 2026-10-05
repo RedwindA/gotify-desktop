@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/updater"
 
 	"gotify-desktop/internal/api"
 	"gotify-desktop/internal/app"
@@ -27,9 +28,8 @@ import (
 )
 
 const (
-	appID      = "com.austin.gotifydesktop"
-	appName    = "Gotify Desktop"
-	appVersion = "0.1.0"
+	appID   = "com.austin.gotifydesktop"
+	appName = "Gotify Desktop"
 )
 
 var (
@@ -51,7 +51,12 @@ var (
 
 func main() {
 	mygo.App.SetName(appName)
-	mygo.App.SetVersion(appVersion)
+	// The version is "version" in mygo.json, which mygo build stamps into
+	// the app; the updater compares it with the published one.
+	if mygo.App.Version() == "" {
+		mygo.App.SetVersion("dev")
+	}
+	mygo.Use(updater.Plugin)
 	setupLogging()
 	if !mygo.App.RequestSingleInstanceLock() {
 		return
@@ -64,7 +69,7 @@ func main() {
 		imageBase = "http://" + imageScheme + ".localhost/"
 	}
 	d.api = api.New(api.Platform{
-		Version:        appVersion,
+		Version:        mygo.App.Version(),
 		OpenAtLogin:    mygo.App.OpenAtLogin,
 		SetOpenAtLogin: mygo.App.SetOpenAtLogin,
 		PickCA:         d.pickCA,
@@ -346,6 +351,7 @@ func (d *desktop) trayMenu(paused bool) *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
 		{Label: i18n.T("Open Gotify Desktop"), Click: func(*mygo.MenuItem, *mygo.Window) { d.showWindow() }},
 		pause,
+		{Label: i18n.T("Check for Updates…"), Click: func(*mygo.MenuItem, *mygo.Window) { updater.CheckForUpdates() }},
 		mygo.Separator(),
 		{Label: i18n.T("Quit"), Role: mygo.RoleQuit},
 	})
