@@ -221,6 +221,15 @@ func TestFirstConnectImportsSilently(t *testing.T) {
 	if last, init, _ := st.LastSeen(e.ServerID); last != 5 || !init {
 		t.Fatalf("last=%d init=%v", last, init)
 	}
+	// Images download independently of catch-up. Wait for their update instead
+	// of assuming the message event means that the image worker has finished.
+	rec.wait(t, 0, func(update Event) bool {
+		if update.Kind != EventApps {
+			return false
+		}
+		apps, err := st.Apps(e.ServerID)
+		return err == nil && len(apps) == 1 && string(apps[0].Image) == "IMG"
+	})
 	apps, _ := st.Apps(e.ServerID)
 	if len(apps) != 1 || string(apps[0].Image) != "IMG" {
 		t.Fatalf("%+v", apps)
