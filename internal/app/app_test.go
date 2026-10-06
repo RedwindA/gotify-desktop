@@ -384,7 +384,11 @@ func TestServerLifecycleAgainstRealServer(t *testing.T) {
 	if tok, err := tokens.Get(id); err != nil || tok == "" {
 		t.Fatalf("token not stored: %v", err)
 	}
-	eventually(t, "first import", func() bool { _, init, _ := a.st.LastSeen(id); return init })
+	eventually(t, "first import and coalesced snapshot", func() bool {
+		_, init, _ := a.st.LastSeen(id)
+		sv, _ := a.Snapshot().Server(id)
+		return init && sv.State == conn.Connected && len(sv.Apps) > 0 && sv.Unread == 2
+	})
 	sv, _ := a.Snapshot().Server(id)
 	if sv.Name == "" || sv.State != conn.Connected || len(sv.Apps) == 0 || sv.Unread != 2 {
 		t.Fatalf("%+v", sv)

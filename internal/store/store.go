@@ -408,11 +408,19 @@ type StoredMessage struct {
 	gotify.Message
 }
 
+// MessageCursor follows the total ordering shared by every server.
+type MessageCursor struct {
+	Date     time.Time `json:"date"`
+	ID       uint      `json:"id"`
+	ServerID int64     `json:"serverId"`
+}
 type MessageQuery struct {
-	ServerID int64
-	AppID    uint
-	Search   string
-	BeforeID uint
+	Before    *MessageCursor
+	Inclusive bool
+	ServerID  int64
+	AppID     uint
+	Search    string
+	BeforeID  uint
 	// ID selects one message.
 	ID    uint
 	Limit int
@@ -435,6 +443,15 @@ func (s *Store) Messages(q MessageQuery) ([]StoredMessage, error) {
 	}
 	if q.BeforeID != 0 {
 		where, args = append(where, "id<?"), append(args, q.BeforeID)
+	}
+	if q.Before != nil {
+		op := ">"
+		if q.Inclusive {
+			op = ">="
+		}
+		where = append(where, "(date<? OR (date=? AND id<?) OR (date=? AND id=? AND server_id"+op+"?))")
+		c := q.Before
+		args = append(args, c.Date.UnixMilli(), c.Date.UnixMilli(), c.ID, c.Date.UnixMilli(), c.ID, c.ServerID)
 	}
 	if q.Search != "" {
 		pat := "%" + likeEscaper.Replace(q.Search) + "%"
@@ -547,6 +564,30 @@ type AppPref struct {
 	MinPriority *int
 }
 
+// AppPrefs loads preferences in one query for a snapshot.
+func (s *Store) AppPrefs(serverID int64) (map[uint]AppPref, error) {
+	rows, err := s.db.Query(`SELECT app_id,muted,min_priority FROM app_prefs WHERE server_id=?`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uint]AppPref{}
+	for rows.Next() {
+		var id uint
+		var p AppPref
+		var min sql.NullInt64
+		if err := rows.Scan(&id, &p.Muted, &min); err != nil {
+			return nil, err
+		}
+		if min.Valid {
+			v := int(min.Int64)
+			p.MinPriority = &v
+		}
+		out[id] = p
+	}
+	return out, rows.Err()
+}
+
 // GetAppPref returns the zero AppPref when none was set.
 func (s *Store) GetAppPref(serverID int64, appID uint) (AppPref, error) {
 	var p AppPref
@@ -569,5 +610,11 @@ func (s *Store) SetAppPref(serverID int64, appID uint, p AppPref) error {
 	}
 	_, err := s.db.Exec(`INSERT INTO app_prefs(server_id,app_id,muted,min_priority) VALUES(?,?,?,?)
 ON CONFLICT(server_id,app_id) DO UPDATE SET muted=excluded.muted, min_priority=excluded.min_priority`, serverID, appID, p.Muted, min)
+	return err
+}
+
+// SetAppImageForPath ignores a download that finished after the icon changed.
+func (s *Store) SetAppImageForPath(serverID int64, appID uint, path string, img []byte) error {
+	_, err := s.db.Exec(`UPDATE apps SET image=? WHERE server_id=? AND id=? AND image_path=?`, img, serverID, appID, path)
 	return err
 }

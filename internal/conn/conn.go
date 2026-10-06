@@ -85,7 +85,7 @@ type Store interface {
 	ImportFloor(serverID int64) (uint, error)
 	ReplaceApps(serverID int64, apps []gotify.Application) error
 	Apps(serverID int64) ([]store.App, error)
-	SetAppImage(serverID int64, appID uint, img []byte) error
+	SetAppImageForPath(serverID int64, appID uint, path string, img []byte) error
 }
 
 const (
@@ -106,11 +106,12 @@ type Supervisor struct {
 	sink func(Event)
 	cfg  Config
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	kick   chan struct{}
-	done   chan struct{}
-	start  sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	kick      chan struct{}
+	imageWake chan struct{}
+	done      chan struct{}
+	start     sync.Once
 
 	mu     sync.Mutex
 	client *gotify.Client
@@ -128,7 +129,7 @@ func New(serverID int64, client *gotify.Client, st Store, sink func(Event), cfg 
 	return &Supervisor{
 		id: serverID, st: st, sink: sink, cfg: cfg.withDefaults(), client: client,
 		ctx: ctx, cancel: cancel, kick: make(chan struct{}, 1), done: make(chan struct{}),
-		known: map[uint]bool{}, missingAt: map[uint]time.Time{},
+		imageWake: make(chan struct{}, 1), known: map[uint]bool{}, missingAt: map[uint]time.Time{},
 	}
 }
 
@@ -237,6 +238,8 @@ type queue struct {
 	wake chan struct{}
 }
 
+func newQueue() *queue { return &queue{wake: make(chan struct{}, 1)} }
+
 func (q *queue) push(m gotify.Message) {
 	q.mu.Lock()
 	q.msgs = append(q.msgs, m)
@@ -297,7 +300,7 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 	connectedAt = time.Now()
 	s.setState(Connected, nil, time.Time{})
 
-	q := &queue{wake: make(chan struct{}, 1)}
+	q := newQueue()
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -330,6 +333,18 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 		}
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.imageWake:
+			}
+			s.fetchImages(ctx, client)
+		}
+	}()
 	if err = s.syncApps(ctx, client); err != nil {
 		return connectedAt, err
 	}
@@ -362,7 +377,10 @@ func (s *Supervisor) syncApps(ctx context.Context, client *gotify.Client) error 
 	for _, a := range apps {
 		s.known[a.ID] = true
 	}
-	s.fetchImages(ctx, client)
+	select {
+	case s.imageWake <- struct{}{}:
+	default:
+	}
 	s.sink(Event{ServerID: s.id, Kind: EventApps})
 	return nil
 }
@@ -377,7 +395,9 @@ func (s *Supervisor) fetchImages(ctx context.Context, client *gotify.Client) {
 			continue
 		}
 		if img, err := client.Image(ctx, a.ImagePath); err == nil && len(img) > 0 {
-			s.st.SetAppImage(s.id, a.ID, img)
+			if s.st.SetAppImageForPath(s.id, a.ID, a.ImagePath, img) == nil {
+				s.sink(Event{ServerID: s.id, Kind: EventApps})
+			}
 		}
 	}
 }

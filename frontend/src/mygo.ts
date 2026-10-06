@@ -54,10 +54,17 @@ export interface Message {
   imageSrc: string;
 }
 
+export interface MessageCursor {
+  date: string;
+  id: number;
+  serverId: number;
+}
+
 /** MessagePage is a page of messages. */
 export interface MessagePage {
+  next: MessageCursor | null;
   messages: Message[];
-  /** HasMore is true when a larger limit would return more messages. */
+  /** HasMore is true when Next can load another page. */
   hasMore: boolean;
   /** MsgGen is the State.MsgGen the page was read at. */
   msgGen: number;
@@ -78,12 +85,13 @@ export interface Navigation {
 
 /** Query selects messages, newest first. */
 export interface Query {
+  before: MessageCursor | null;
   /** ServerID and AppID narrow the messages to a server and one of its apps; 0 is all. */
   serverId: number;
   appId: number;
   search: string;
   limit: number;
-  /** Include grows the page until it holds this message, if it is in the scope. */
+  /** Include starts a bounded page at this message, if it is in the scope. */
   include: MessageRef | null;
 }
 
@@ -172,7 +180,7 @@ export const Desktop = {
   deleteMessage(serverID: number, id: number): Promise<void> {
     return call("Desktop.DeleteMessage", serverID, id);
   },
-  /** MarkAllRead marks the messages of an app, a server (appID 0) or every server (serverID 0) read. */
+  /** MarkAllRead marks the selected app, server or all servers read. */
   markAllRead(serverID: number, appID: number): Promise<void> {
     return call("Desktop.MarkAllRead", serverID, appID);
   },

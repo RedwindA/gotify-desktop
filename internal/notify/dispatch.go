@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,14 +24,14 @@ import (
 )
 
 const (
-	queueSize     = 256
 	imageTimeout  = 5 * time.Second
 	maxImageBytes = 5 << 20
 	imageKeepFor  = 24 * time.Hour
 )
 
 // Dispatcher plans and shows notifications on its own goroutine so the
-// connection sink never blocks.
+// connection sink never blocks. Events wait in a list rather than a fixed-size
+// channel, so a slow notifier delays notifications without dropping them.
 type Dispatcher struct {
 	n        Notifier
 	st       *store.Store
@@ -39,13 +40,14 @@ type Dispatcher struct {
 	http     *http.Client
 	planner  *Planner
 
-	mu     sync.Mutex
-	closed bool
-	q      chan conn.Event
-	done   chan struct{}
-	ctx    context.Context
-	cancel context.CancelFunc
-	icons  map[string]string // icon path -> content hash
+	mu      sync.Mutex
+	closed  bool
+	backlog []conn.Event
+	wake    chan struct{}
+	done    chan struct{}
+	ctx     context.Context
+	cancel  context.CancelFunc
+	icons   map[string]string // icon path -> content hash
 }
 
 func NewDispatcher(n Notifier, st *store.Store, settings func() Settings, cacheDir string, httpc *http.Client) *Dispatcher {
@@ -58,27 +60,34 @@ func NewDispatcher(n Notifier, st *store.Store, settings func() Settings, cacheD
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &Dispatcher{
 		n: n, st: st, settings: settings, cacheDir: cacheDir, http: httpc, planner: NewPlanner(),
-		q: make(chan conn.Event, queueSize), done: make(chan struct{}), ctx: ctx, cancel: cancel, icons: map[string]string{},
+		wake: make(chan struct{}, 1), done: make(chan struct{}), ctx: ctx, cancel: cancel, icons: map[string]string{},
 	}
 	pruneDir(filepath.Join(cacheDir, "images"), imageKeepFor)
 	go d.run()
 	return d
 }
 
-// Handle queues ev; it never blocks and drops the event if the queue is full.
+// Handle queues ev and never blocks. While the worker is behind, an event that
+// follows one of the same server and kind joins it, keeping the backlog short.
 func (d *Dispatcher) Handle(ev conn.Event) {
-	if ev.Kind != conn.EventMessages || ev.Silent {
+	if ev.Kind != conn.EventMessages || ev.Silent || len(ev.Messages) == 0 {
 		return
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.closed {
+		d.mu.Unlock()
 		return
 	}
+	if n := len(d.backlog); n > 0 && d.backlog[n-1].ServerID == ev.ServerID && d.backlog[n-1].CatchUp == ev.CatchUp {
+		d.backlog[n-1].Messages = append(d.backlog[n-1].Messages, ev.Messages...)
+	} else {
+		ev.Messages = slices.Clone(ev.Messages) // appended to above, so not the sender's
+		d.backlog = append(d.backlog, ev)
+	}
+	d.mu.Unlock()
 	select {
-	case d.q <- ev:
+	case d.wake <- struct{}{}:
 	default:
-		log.Printf("notify: queue full, dropping %d messages", len(ev.Messages))
 	}
 }
 
@@ -89,7 +98,7 @@ func (d *Dispatcher) Close() {
 		return
 	}
 	d.closed = true
-	close(d.q)
+	d.backlog = nil
 	d.mu.Unlock()
 	d.cancel()
 	<-d.done
@@ -97,11 +106,23 @@ func (d *Dispatcher) Close() {
 
 func (d *Dispatcher) run() {
 	defer close(d.done)
-	for ev := range d.q {
-		if d.ctx.Err() != nil {
-			continue
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-d.wake:
 		}
-		d.process(ev)
+		for d.ctx.Err() == nil {
+			d.mu.Lock()
+			if len(d.backlog) == 0 {
+				d.mu.Unlock()
+				break
+			}
+			ev := d.backlog[0]
+			d.backlog = d.backlog[1:]
+			d.mu.Unlock()
+			d.process(ev)
+		}
 	}
 }
 

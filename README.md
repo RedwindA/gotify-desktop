@@ -48,6 +48,13 @@ go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64,windows/arm
 
 Signing and the `.dmg` for macOS need a Mac; the Windows installer needs `makensis`. See [AGENTS.md](AGENTS.md) for tests and the rest of the commands.
 
+The message-list browser regression test uses an installed Chrome (override its path with `CHROME`):
+
+```sh
+bun run --cwd frontend build
+bun run --cwd frontend test:messages
+```
+
 ## License
 
 Copyright © 2026 RedwindA. Gotify Desktop is free software under the [GNU General Public License v3.0](LICENSE).
