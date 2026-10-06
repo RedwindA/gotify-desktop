@@ -2,10 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
-## 0.1.4
+## 0.1.5
 
 - Hide the default browser context menu outside text fields in production builds, while keeping native editing commands and message actions.
 - Add Copy selected text to message menus without losing the selection when the menu opens.
+- Dismiss success toasts, such as Test notification sent, after two seconds.
 
 ## 0.1.2
 

@@ -45,7 +45,7 @@ export function App() {
   const [prefs, setPrefs] = useState<{ serverId: number; appId: number } | null>(null);
 
   const onError = useCallback((body: string) => void toast({ body, type: "error" }), [toast]);
-  const onInfo = useCallback((body: string) => void toast({ body }), [toast]);
+  const onInfo = useCallback((body: string) => void toast({ body, autoHideDuration: 2000 }), [toast]);
 
   // A server or app that went away leaves its page for all messages.
   useEffect(() => {
