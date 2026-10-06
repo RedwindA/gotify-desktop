@@ -48,6 +48,8 @@ go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64,windows/arm
 
 Signing and the `.dmg` for macOS need a Mac; the Windows installer needs `makensis`. See [AGENTS.md](AGENTS.md) for tests and the rest of the commands.
 
+On Windows, `GOTIFY_NOTIFY_IT=1 go test -run TestWinRTToastRoundTrip ./internal/notify` opts into a real silent toast display/removal smoke test.
+
 ## License
 
 Copyright © 2026 RedwindA. Gotify Desktop is free software under the [GNU General Public License v3.0](LICENSE).
