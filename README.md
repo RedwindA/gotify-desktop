@@ -55,6 +55,8 @@ bun run --cwd frontend build
 bun run --cwd frontend test:messages
 ```
 
+On Windows, `GOTIFY_NOTIFY_IT=1 go test -run TestWinRTToastRoundTrip ./internal/notify` opts into a real silent toast display/removal smoke test.
+
 ## License
 
 Copyright © 2026 RedwindA. Gotify Desktop is free software under the [GNU General Public License v3.0](LICENSE).
