@@ -10,7 +10,7 @@ import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
 import { Timestamp } from "@astryxdesign/core/Timestamp";
 import { ExternalLinkIcon } from "lucide-react";
-import { memo, useState, type ReactNode } from "react";
+import { memo, useCallback, useRef, useState, type ReactNode } from "react";
 import { Desktop, type App, type Message } from "./mygo";
 import { useT } from "./i18n";
 import { AppAvatar } from "./Sidebar";
@@ -83,8 +83,18 @@ export interface MessageCardProps {
 export const MessageCard = memo(function MessageCard({ msg, app, serverName, highlighted, deleting, onDelete }: MessageCardProps) {
   const t = useT();
   const [viewing, setViewing] = useState<string | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const [selectedText, setSelectedText] = useState("");
+  const captureSelection = useCallback((open: boolean) => {
+    if (!open) return;
+    // Snapshot before the menu takes focus; never copy a different card's selection.
+    const selection = window.getSelection();
+    setSelectedText(selection && !selection.isCollapsed && card.current?.contains(selection.anchorNode) && card.current?.contains(selection.focusNode)
+      ? selection.toString() : "");
+  }, []);
   const title = msg.title || app?.name || t.message;
   const items = [
+    ...(selectedText ? [{ label: t.copySelectedText, onClick: () => void Desktop.copyText(selectedText) }] : []),
     { label: t.copyText, onClick: () => void Desktop.copyText(msg.body) },
     ...(msg.clickUrl ? [{ label: t.openLink, onClick: () => openLink(msg.clickUrl) }] : []),
     ...(msg.imageUrl ? [{ label: t.openImageInBrowser, onClick: () => openLink(msg.imageUrl) }] : []),
@@ -94,8 +104,9 @@ export const MessageCard = memo(function MessageCard({ msg, app, serverName, hig
   const meta = [app?.name, serverName].filter(Boolean).join(" · ");
   return (
     <>
-      <ContextMenu items={items} label={t.messageActions}>
+      <ContextMenu items={items} label={t.messageActions} onOpenChange={captureSelection}>
         <Card
+          ref={card}
           className={"msg-card" + (highlighted ? " msg-highlight" : "") + (deleting ? " msg-deleting" : "")}
           data-key={`${msg.serverId}/${msg.id}`}
           data-unread={msg.read ? undefined : "true"}>
@@ -116,7 +127,7 @@ export const MessageCard = memo(function MessageCard({ msg, app, serverName, hig
                   </HStack>
                 </VStack>
                 {msg.priority >= 8 && <Badge variant="error" label={t.priority(msg.priority)} className="no-shrink" />}
-                <MoreMenu size="sm" label={t.messageActions} alignment="end" items={items} />
+                <MoreMenu size="sm" label={t.messageActions} alignment="end" items={items} onOpenChange={captureSelection} />
               </HStack>
               {msg.body &&
                 (msg.markdown ? (

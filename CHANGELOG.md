@@ -2,6 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.1.3
+
+- Hide the default browser context menu outside text fields in production builds, while keeping native editing commands and message actions.
+- Add Copy selected text to message menus without losing the selection when the menu opens.
+
 ## 0.1.2
 
 - On Windows, reading a message removes its toast from the notification center.
