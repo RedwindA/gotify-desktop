@@ -12,7 +12,7 @@ import { CheckCheckIcon, InboxIcon, SearchIcon, SearchXIcon } from "lucide-react
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MessageCard } from "./MessageCard";
-import { Desktop, type Message, type MessagePage, type Server, type State } from "./mygo";
+import { Desktop, type Message, type MessagePage, type MessageRef, type Server, type State } from "./mygo";
 import { useT } from "./i18n";
 import { statusText } from "./Sidebar";
 import { clearNavTarget, errorText, findServer, useNavTarget, useNow } from "./store";
@@ -55,7 +55,7 @@ function useViewportHeight(): number {
  * upper three quarters of the window, however tall it is. shown names the
  * cards rendered, which change as the list scrolls.
  */
-function useMarkVisibleRead(list: HTMLElement | null, messages: Message[], shown: string) {
+function useMarkVisibleRead(list: HTMLElement | null, messages: Message[], shown: string, onError: (message: string) => void) {
   const latest = useRef(messages);
   latest.current = messages;
   const observer = useRef<IntersectionObserver | null>(null);
@@ -100,7 +100,16 @@ function useMarkVisibleRead(list: HTMLElement | null, messages: Message[], shown
         marked.add(k);
         byServer.set(m.serverId, [...(byServer.get(m.serverId) ?? []), m.id]);
       }
-      for (const [server, ids] of byServer) void Desktop.markRead(server, ids);
+      for (const [server, ids] of byServer) {
+        void Desktop.markRead(server, ids).catch((err) => {
+          for (const id of ids) {
+            const key = keyOf({ serverId: server, id });
+            marked.delete(key);
+            seen.set(key, performance.now() + 5000);
+          }
+          onError(errorText(err));
+        });
+      }
     }, 200);
     return () => {
       io.disconnect();
@@ -110,7 +119,7 @@ function useMarkVisibleRead(list: HTMLElement | null, messages: Message[], shown
       removeEventListener("focus", restart);
       document.removeEventListener("visibilitychange", restart);
     };
-  }, [list, height]);
+  }, [list, height, onError]);
   // Observes the unread cards shown now and lets go of the others, keeping the
   // clocks of the cards that stay.
   useEffect(() => {
@@ -169,7 +178,10 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(pageSize);
+  const [refresh, setRefresh] = useState(0);
+  const [historical, setHistorical] = useState(false);
   const [page, setPage] = useState<MessagePage | null>(null);
+  const loaded = useRef<{ scope: string; gen: number; page: MessagePage; anchor: MessageRef | null } | null>(null);
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
   const [highlight, setHighlight] = useState("");
   const [scrollTo, setScrollTo] = useState("");
@@ -200,30 +212,45 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     setQuery("");
   }, [target]);
 
-  // Loads the page again whenever its query or the messages change. With a
-  // notification's message to show, the page grows to hold it and keeps that size.
+  // Refreshes the loaded window when messages change; scrolling requests only
+  // the next bounded page. Notification navigation starts at its target.
   useEffect(() => {
     let live = true;
     const include = target && target.messageId !== 0 ? { serverId: target.serverId, id: target.messageId } : null;
-    Desktop.messages({ serverId, appId, search: target ? "" : query, limit, include }).then(
-      (p) => {
-        if (!live) return;
-        setPage((prev) => ({ ...p, messages: reconcile(prev?.messages ?? [], p.messages) }));
-        if (!target) return;
-        const key = keyOf({ serverId: target.serverId, id: target.messageId });
-        if (target.messageId !== 0 && p.messages.some((m) => keyOf(m) === key)) {
-          setLimit((l) => Math.max(l, p.messages.length));
-          setScrollTo(key);
-          setHighlight(key);
-        }
-        clearNavTarget();
-      },
-      (err) => live && onError(t.couldNotLoad(errorText(err))),
-    );
+    const scope = `${serverId}/${appId}/${target ? "" : query}`;
+    const previous = loaded.current;
+    const anchor = include ?? (previous?.scope === scope ? previous.anchor : null);
+    const load = async () => {
+      // Growing an unchanged list reads only its next page. After a mutation,
+      // refresh the loaded window using bounded cursor queries.
+      const reuse = !target && previous?.scope === scope && previous.gen === state.msgGen;
+      let result = reuse ? previous.page : await Desktop.messages({ serverId, appId, search: target ? "" : query, limit: pageSize, include: anchor, before: null });
+      const all = [...result.messages];
+      while (live && result.hasMore && result.next && all.length < limit) {
+        result = await Desktop.messages({ serverId, appId, search: target ? "" : query, limit: pageSize, include: null, before: result.next });
+        all.push(...result.messages);
+      }
+      if (!live) return;
+      // A message can move into a refreshed page while queries are in flight.
+      const unique = [...new Map(all.map((m) => [keyOf(m), m])).values()];
+      const p = { ...result, messages: unique };
+      const effectiveAnchor = anchor && unique.some((m) => keyOf(m) === keyOf(anchor)) ? anchor : null;
+      loaded.current = { scope, gen: state.msgGen, page: p, anchor: effectiveAnchor };
+      setHistorical(effectiveAnchor !== null);
+      setPage((prev) => ({ ...p, messages: reconcile(prev?.messages ?? [], p.messages) }));
+      if (!target) return;
+      const key = keyOf({ serverId: target.serverId, id: target.messageId });
+      if (target.messageId !== 0 && p.messages.some((m) => keyOf(m) === key)) {
+        setScrollTo(key);
+        setHighlight(key);
+      }
+      clearNavTarget();
+    };
+    void load().catch((err) => live && onError(t.couldNotLoad(errorText(err))));
     return () => {
       live = false;
     };
-  }, [serverId, appId, query, limit, state.msgGen, target, onError, t]);
+  }, [serverId, appId, query, limit, state.msgGen, target, onError, t, refresh]);
 
   const messages = page?.messages ?? [];
   // Where the list starts in the scrolled content, below the banners.
@@ -269,7 +296,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     if (hasMore && lastShown >= count - loadMoreAhead) setLimit(count + pageSize);
   }, [hasMore, lastShown, count]);
 
-  useMarkVisibleRead(list, messages, rows.map((r) => r.key).join());
+  useMarkVisibleRead(list, messages, rows.map((r) => r.key).join(), onError);
 
   const onDelete = useCallback(
     (m: Message) => {
@@ -318,7 +345,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                 isIconOnly={isMobile}
                 tooltip={isMobile ? t.markAllRead : undefined}
                 className="no-shrink"
-                onClick={() => void Desktop.markAllRead(serverId, appId)}
+                onClick={() => void Desktop.markAllRead(serverId, appId).catch((err) => onError(errorText(err)))}
               />
             )}
             <TextInput
@@ -338,6 +365,15 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
         <LayoutContent ref={setScroller}>
           <VStack gap={3}>
             <ServerBanners servers={scoped} onRelogin={onRelogin} />
+            {historical && (
+              <Banner status="info" title={t.viewingOlder} endContent={<Button label={t.showLatest} size="sm" onClick={() => {
+                loaded.current = null;
+                setHistorical(false);
+                setLimit(pageSize);
+                setRefresh((n) => n + 1);
+                scroller?.scrollTo({ top: 0 });
+              }} />} />
+            )}
             {page === null ? (
               <HStack hAlign="center" padding={10}>
                 <Spinner size="lg" />

@@ -143,12 +143,12 @@ func TestMessagesPagesAndGrowToInclude(t *testing.T) {
 		t.Fatalf("page: %d, more %v", len(p.Messages), p.HasMore)
 	}
 	p, _ = d.Messages(Query{Limit: 100, Include: &MessageRef{ServerID: 1, ID: 120}})
-	if len(p.Messages) != 200 || !p.HasMore {
-		t.Fatalf("the page should grow by pages until it holds message 120: %d, more %v", len(p.Messages), p.HasMore)
+	if len(p.Messages) != 100 || !p.HasMore || p.Messages[0].ID != 120 {
+		t.Fatalf("the bounded page should start at message 120: %d, more %v", len(p.Messages), p.HasMore)
 	}
 	p, _ = d.Messages(Query{Limit: 100, Include: &MessageRef{ServerID: 2, ID: 30}})
-	if len(p.Messages) != 250 {
-		t.Errorf("a message that is not there loads everything once: %d", len(p.Messages))
+	if len(p.Messages) != 100 {
+		t.Errorf("a missing target must not load the entire history: %d", len(p.Messages))
 	}
 }
 

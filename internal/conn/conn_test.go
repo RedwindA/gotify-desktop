@@ -31,6 +31,7 @@ type fakeServer struct {
 	streams   atomic.Int32
 	images    atomic.Int32
 	onMessage func()
+	onImage   func()
 }
 
 func newFake(t *testing.T) *fakeServer {
@@ -53,6 +54,9 @@ func newFake(t *testing.T) *fakeServer {
 	}))
 	mux.HandleFunc("/image/", func(w http.ResponseWriter, r *http.Request) {
 		f.images.Add(1)
+		if f.onImage != nil {
+			f.onImage()
+		}
 		w.Write([]byte("IMG"))
 	})
 	mux.HandleFunc("/message", guard(func(w http.ResponseWriter, r *http.Request) {
