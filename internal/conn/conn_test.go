@@ -277,7 +277,6 @@ func TestCatchUpPaginationDedupAndGapMessage(t *testing.T) {
 	for i := range want {
 		want[i] = uint(i + 3)
 	}
-	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %d ids, first %v last %v", len(got), got[:3], got[len(got)-3:])
 	}
@@ -327,7 +326,6 @@ func TestKickInBackoffAndStopIsFinal(t *testing.T) {
 	s := New(sid, c, st, rec.sink, Config{MinBackoff: time.Hour, MaxBackoff: time.Hour})
 	s.Start()
 	_, n := rec.wait(t, 0, isState(Connected))
-	rec.wait(t, n, isMsgs) // REST has started after the fake registered the stream.
 	f.dropConns()
 	e, n := rec.wait(t, n, isState(Backoff))
 	if time.Until(e.RetryAt) < 30*time.Minute {
@@ -561,7 +559,6 @@ func TestCatchUpOverlapDoesNotDependOnPageAlignment(t *testing.T) {
 		}
 		got = append(got, ids(e.Messages)...)
 	}
-	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
 	if !reflect.DeepEqual(got, []uint{1, 2, 3, 4, 5, 7, 8, 9, 10}) {
 		t.Fatalf("got %v", got)
 	}

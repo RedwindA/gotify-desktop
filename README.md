@@ -14,7 +14,7 @@ A receive-only desktop client for [Gotify](https://gotify.net). It sits in the t
 The web UI that ships with gotify/server is good for managing a server. It is not as good for receiving notifications on a desktop:
 
 - **No browser tab to keep alive.** The web UI only receives messages while its tab is open, and browsers throttle or freeze background tabs. Gotify Desktop runs as a single-instance tray app and keeps receiving when its window is closed. The tray icon shows whether everything is read, there is something unread, or a server is offline.
-- **A connection that recovers on its own.** Each server has a supervisor that checks the websocket with ping/pong, reconnects with backoff, and reconnects right away when the computer wakes from sleep. After a reconnect it fetches the messages it missed over REST and stores each one once, with duplicates removed from local history.
+- **A connection that recovers on its own.** Each server has a supervisor that checks the websocket with ping/pong, reconnects with backoff, and reconnects right away when the computer wakes from sleep. After a reconnect it fetches the messages it missed over REST and stores each one once, so nothing is lost or shown twice.
 - **Native notifications with a policy.** Windows toasts, macOS UNUserNotificationCenter and Linux D-Bus notifications, without browser permission prompts or a browser's name on them. They follow Gotify priorities: 0 never notifies, 1–3 are silent, 4–7 normal, 8 and up high. You also get:
   - do-not-disturb hours (they may wrap midnight), and high priority can still get through;
   - pausing notifications, and per-app mute or minimum priority;
@@ -25,12 +25,6 @@ The web UI that ships with gotify/server is good for managing a server. It is no
 - **A desktop window.** Markdown message bodies, images viewed in the app, light and dark themes, English and Simplified Chinese, and a message list that stays fast with many messages.
 
 What the web UI still does better: it needs no install, works from any device with a browser, and manages the server: applications, clients, users and plugins. Gotify Desktop only receives messages, so keep using the web UI for those.
-
-## Delivery and recovery
-
-Received messages and pending notifications are saved together. The app resumes unfinished notifications on startup and retries temporary display failures up to five times. Work older than 24 hours expires; muted, read, deleted, paused or do-not-disturb messages are not replayed. The initial history import stays silent.
-
-A crash after the operating system accepts a notification but before the app records success can cause a repeat. Stable notification identifiers allow platforms to replace matching notifications, but exactly-once display is not guaranteed. Reconnect catch-up is saved in bounded pages and only advances its synchronization position after every page succeeds.
 
 ## Installing
 
@@ -60,8 +54,6 @@ The message-list browser regression test uses an installed Chrome (override its 
 bun run --cwd frontend build
 bun run --cwd frontend test:messages
 ```
-
-On Windows, `GOTIFY_NOTIFY_IT=1 go test -run TestWinRTToastRoundTrip ./internal/notify` opts into a real silent toast display/removal smoke test.
 
 ## License
 

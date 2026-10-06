@@ -4,7 +4,6 @@ package notify
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -96,16 +95,13 @@ func (n *winNotifier) run(f func() error) error {
 
 func (n *winNotifier) Supported() bool { return true }
 
-func (n *winNotifier) Remove(id string) {
-	if err := n.run(func() error { return removeTaggedToast(n.appID, id) }); err != nil {
-		log.Printf("notify: remove %s: %v", id, err)
-	}
-}
+func (n *winNotifier) Remove(string) {}
 
 func (n *winNotifier) OnActivate(fn func(string)) { n.act.set(fn) }
 
 func (n *winNotifier) Show(nn Notification) error {
-	if err := n.run(func() error { return showTaggedToast(n.appID, nn) }); err != nil {
+	xml := buildToastXML(nn)
+	if err := n.run(func() error { return wintoast.Push(n.appID, xml) }); err != nil {
 		return fmt.Errorf("notify: %w", err)
 	}
 	return nil

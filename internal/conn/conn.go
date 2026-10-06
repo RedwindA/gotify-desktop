@@ -2,7 +2,6 @@ package conn
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -81,14 +80,12 @@ func (c Config) withDefaults() Config {
 
 type Store interface {
 	LastSeen(serverID int64) (uint, bool, error)
-	SaveReceivedMessages(serverID int64, msgs []gotify.Message, catchUp bool) ([]gotify.Message, error)
+	SaveMessages(serverID int64, msgs []gotify.Message) ([]gotify.Message, error)
 	SaveInitialImport(serverID int64, live, history []gotify.Message, floor uint) (insertedLive, insertedHistory []gotify.Message, err error)
 	ImportFloor(serverID int64) (uint, error)
 	ReplaceApps(serverID int64, apps []gotify.Application) error
 	Apps(serverID int64) ([]store.App, error)
 	SetAppImageForPath(serverID int64, appID uint, path string, img []byte) error
-	SaveCatchUpBatch(serverID int64, msgs []gotify.Message, catchUp bool) ([]gotify.Message, error)
-	FinishCatchUp(serverID int64, last uint) error
 }
 
 const (
@@ -235,56 +232,29 @@ func (s *Supervisor) run() {
 	}
 }
 
-const maxQueuedMessages = 1024
-const maxQueuedBytes = 8 << 20
-
 type queue struct {
-	mu    sync.Mutex
-	msgs  []gotify.Message
-	bytes int
-	wake  chan struct{}
-	space chan struct{}
+	mu   sync.Mutex
+	msgs []gotify.Message
+	wake chan struct{}
 }
 
-func newQueue() *queue { return &queue{wake: make(chan struct{}, 1), space: make(chan struct{}, 1)} }
+func newQueue() *queue { return &queue{wake: make(chan struct{}, 1)} }
 
-// Apply backpressure instead of allocating without a bound. The session drains
-// this queue between REST pages, and cancellation always unblocks the reader.
-func (q *queue) push(ctx context.Context, m gotify.Message) error {
-	b, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	size := len(b)
-	for {
-		q.mu.Lock()
-		if len(q.msgs) < maxQueuedMessages && (q.bytes+size <= maxQueuedBytes || len(q.msgs) == 0) {
-			q.msgs = append(q.msgs, m)
-			q.bytes += size
-			q.mu.Unlock()
-			select {
-			case q.wake <- struct{}{}:
-			default:
-			}
-			return nil
-		}
-		q.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-q.space:
-		}
-	}
-}
-func (q *queue) take() []gotify.Message {
+func (q *queue) push(m gotify.Message) {
 	q.mu.Lock()
-	m := q.msgs
-	q.msgs, q.bytes = nil, 0
+	q.msgs = append(q.msgs, m)
 	q.mu.Unlock()
 	select {
-	case q.space <- struct{}{}:
+	case q.wake <- struct{}{}:
 	default:
 	}
+}
+
+func (q *queue) take() []gotify.Message {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	m := q.msgs
+	q.msgs = nil
 	return m
 }
 
@@ -340,9 +310,7 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 				cancel(fmt.Errorf("stream read: %w", err))
 				return
 			}
-			if err := q.push(ctx, m); err != nil {
-				return
-			}
+			q.push(m)
 		}
 	}()
 	go func() {
@@ -439,19 +407,28 @@ func (s *Supervisor) catchUp(ctx context.Context, client *gotify.Client, q *queu
 	if err != nil {
 		return err
 	}
-	if initialized {
-		return s.catchUpPages(ctx, client, q, last)
-	}
 	var got []gotify.Message
 	var cursor uint
+	below := 0 // messages at or below last_seen collected so far
 	for {
 		page, err := client.Messages(ctx, s.cfg.PageSize, cursor)
 		if err != nil {
 			return err
 		}
 		done := false
-		got = append(got, page.Messages...)
-		if len(got) >= s.cfg.ImportOnFirstConnect {
+		// The server broadcasts concurrently with committing, so a message below
+		// last_seen may never have been delivered: keep going until catchUpOverlap
+		// messages at or below it are in hand. SaveMessages drops the stored ones.
+		for _, m := range page.Messages {
+			if initialized && m.ID <= last {
+				below++
+			}
+			got = append(got, m)
+		}
+		if initialized && below >= catchUpOverlap {
+			done = true
+		}
+		if !initialized && len(got) >= s.cfg.ImportOnFirstConnect {
 			got = got[:s.cfg.ImportOnFirstConnect]
 			done = true
 		}
@@ -461,6 +438,17 @@ func (s *Supervisor) catchUp(ctx context.Context, client *gotify.Client, q *queu
 		cursor = page.Paging.Since
 	}
 	slices.Reverse(got)
+	if initialized {
+		floor, err := s.st.ImportFloor(s.id)
+		if err != nil {
+			return err
+		}
+		got = slices.DeleteFunc(got, func(m gotify.Message) bool { return m.ID < floor })
+		if len(got) == 0 {
+			return nil
+		}
+		return s.deliver(ctx, client, got, true, false)
+	}
 	// Messages that arrived while the history loaded are news, not history; both are
 	// saved together so a failed save leaves the server uninitialized.
 	live := q.take()
@@ -505,7 +493,7 @@ func (s *Supervisor) deliver(ctx context.Context, client *gotify.Client, msgs []
 	if err := s.syncUnknownApps(ctx, client, msgs); err != nil {
 		return err
 	}
-	inserted, err := s.st.SaveReceivedMessages(s.id, msgs, catchUp)
+	inserted, err := s.st.SaveMessages(s.id, msgs)
 	if err != nil {
 		return err
 	}
@@ -526,55 +514,4 @@ func (s *Supervisor) hasUnknownApp(msgs []gotify.Message) bool {
 		return true
 	}
 	return false
-}
-
-func (s *Supervisor) catchUpPages(ctx context.Context, client *gotify.Client, q *queue, last uint) error {
-	floor, err := s.st.ImportFloor(s.id)
-	if err != nil {
-		return err
-	}
-	var cursor uint
-	highest, below := last, 0
-	save := func(msgs []gotify.Message, catchUp bool) error {
-		if len(msgs) == 0 {
-			return nil
-		}
-		if err := s.syncUnknownApps(ctx, client, msgs); err != nil {
-			return err
-		}
-		for _, m := range msgs {
-			highest = max(highest, m.ID)
-		}
-		inserted, err := s.st.SaveCatchUpBatch(s.id, msgs, catchUp)
-		if err != nil {
-			return err
-		}
-		if len(inserted) > 0 {
-			s.sink(Event{ServerID: s.id, Kind: EventMessages, Messages: inserted, CatchUp: catchUp})
-		}
-		return nil
-	}
-	for {
-		page, err := client.Messages(ctx, s.cfg.PageSize, cursor)
-		if err != nil {
-			return err
-		}
-		for _, m := range page.Messages {
-			if m.ID <= last {
-				below++
-			}
-		}
-		msgs := slices.DeleteFunc(page.Messages, func(m gotify.Message) bool { return m.ID < floor })
-		if err := save(msgs, true); err != nil {
-			return err
-		}
-		if err := save(q.take(), false); err != nil {
-			return err
-		}
-		if below >= catchUpOverlap || page.Paging.Next == "" || page.Paging.Since == 0 || (cursor != 0 && page.Paging.Since >= cursor) {
-			break
-		}
-		cursor = page.Paging.Since
-	}
-	return s.st.FinishCatchUp(s.id, highest)
 }

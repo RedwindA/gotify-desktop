@@ -1,9 +1,6 @@
 package notify
 
 import (
-	"context"
-	"errors"
-	"net/http"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -14,40 +11,69 @@ import (
 	"gotify-desktop/internal/store"
 )
 
-type retryNotifier struct {
-	mu       sync.Mutex
-	ids      []string
-	failures int
-}
-
 type blockedNotifier struct {
-	retryNotifier
-	first            sync.Once
+	mu               sync.Mutex
+	ids              []string
+	first, released  sync.Once
 	entered, release chan struct{}
 }
 
+func (n *blockedNotifier) unblock() { n.released.Do(func() { close(n.release) }) }
+
+func (n *blockedNotifier) Supported() bool         { return true }
+func (n *blockedNotifier) Remove(string)           {}
+func (n *blockedNotifier) OnActivate(func(string)) {}
 func (n *blockedNotifier) Show(m Notification) error {
 	n.first.Do(func() { close(n.entered); <-n.release })
-	return n.retryNotifier.Show(m)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.ids = append(n.ids, m.ID)
+	return nil
 }
 
-func TestSlowNotifierDoesNotLoseMoreThan256Events(t *testing.T) {
+func (n *blockedNotifier) count() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.ids)
+}
+
+func waitCount(t *testing.T, n *blockedNotifier, want int) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); n.count() < want; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d notifications shown", n.count(), want)
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := n.count(); got != want {
+		t.Fatalf("%d notifications shown, want %d", got, want)
+	}
+}
+
+func blockedSetup(t *testing.T) (*Dispatcher, *blockedNotifier, *store.Store, int64) {
+	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "backlog.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() { s.Close() })
 	id, _ := s.AddServer(store.Server{})
 	n := &blockedNotifier{entered: make(chan struct{}), release: make(chan struct{})}
 	d := NewDispatcher(n, s, DefaultSettings, t.TempDir(), nil)
-	defer d.Close()
-	var release sync.Once
-	defer release.Do(func() { close(n.release) })
+	t.Cleanup(func() { n.unblock(); d.Close() })
+	return d, n, s, id
+}
+
+// The old dispatcher dropped events once 256 were waiting behind a slow notifier.
+func TestSlowNotifierDoesNotDropEvents(t *testing.T) {
+	d, n, s, id := blockedSetup(t)
 	for i := uint(1); i <= 300; i++ {
-		if _, err := s.SaveReceivedMessages(id, []gotify.Message{{ID: i, AppID: i, Priority: 5}}, false); err != nil {
+		// One app per message, so no burst summary folds them together.
+		m := []gotify.Message{{ID: i, AppID: i, Priority: 5}}
+		if _, err := s.SaveMessages(id, m); err != nil {
 			t.Fatal(err)
 		}
-		d.Handle(conn.Event{Kind: conn.EventMessages})
+		d.Handle(conn.Event{Kind: conn.EventMessages, ServerID: id, Messages: m})
 		if i == 1 {
 			select {
 			case <-n.entered:
@@ -56,132 +82,27 @@ func TestSlowNotifierDoesNotLoseMoreThan256Events(t *testing.T) {
 			}
 		}
 	}
-	release.Do(func() { close(n.release) })
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		n.mu.Lock()
-		count := len(n.ids)
-		n.mu.Unlock()
-		if count == 300 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("only delivered %d of 300 jobs", count)
-		}
-	}
+	n.unblock()
+	waitCount(t, n, 300)
 }
 
-func (n *retryNotifier) Supported() bool         { return true }
-func (n *retryNotifier) Remove(string)           {}
-func (n *retryNotifier) OnActivate(func(string)) {}
-func (n *retryNotifier) Show(m Notification) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.ids = append(n.ids, m.ID)
-	if n.failures > 0 {
-		n.failures--
-		return errors.New("temporary notification failure")
+// Catch-up events that wait together make one summary of all their messages.
+func TestWaitingCatchUpEventsMerge(t *testing.T) {
+	d, n, s, id := blockedSetup(t)
+	first := []gotify.Message{{ID: 1, AppID: 1, Priority: 5}}
+	s.SaveMessages(id, first)
+	d.Handle(conn.Event{Kind: conn.EventMessages, ServerID: id, Messages: first})
+	<-n.entered
+	var msgs []gotify.Message
+	for i := uint(2); i <= 21; i++ {
+		msgs = append(msgs, gotify.Message{ID: i, AppID: 1, Priority: 5})
 	}
-	return nil
-}
-
-func TestFailedNotificationResumesAfterRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "retry.db")
-	s, err := store.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := s.AddServer(store.Server{})
-	s.SaveReceivedMessages(id, []gotify.Message{{ID: 1, AppID: 1, Priority: 5, Title: "retry me"}}, false)
-	n := &retryNotifier{failures: 1}
-	d := &Dispatcher{n: n, st: s, settings: DefaultSettings, planner: NewPlanner(), ctx: context.Background(), http: http.DefaultClient, icons: map[string]string{}, cacheDir: t.TempDir()}
-	job, _ := s.NextNotification(time.Now())
-	if err := d.process(job); err == nil {
-		t.Fatal("expected show failure")
-	}
-	job, _ = s.NextNotification(time.Now())
-	if job == nil || len(job.Plans) == 0 {
-		t.Fatal("failed notification was not checkpointed")
-	}
-	s.Close()
-	s, err = store.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	// Startup must drain the outbox without a connection event or Handle call.
-	d = NewDispatcher(n, s, DefaultSettings, t.TempDir(), nil)
-	defer d.Close()
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		job, err = s.NextNotification(time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if job == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("startup did not resume notification")
-		}
-	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if len(n.ids) != 2 || n.ids[0] != n.ids[1] {
-		t.Fatalf("unstable retry identity: %v", n.ids)
-	}
-}
-
-func TestNotificationWorkerRetriesWithoutAnotherMessage(t *testing.T) {
-	s, err := store.Open(filepath.Join(t.TempDir(), "retry.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	id, _ := s.AddServer(store.Server{})
-	s.SaveReceivedMessages(id, []gotify.Message{{ID: 1, AppID: 1, Priority: 5}}, false)
-	n := &retryNotifier{failures: 1}
-	d := NewDispatcher(n, s, DefaultSettings, t.TempDir(), nil)
-	defer d.Close()
-	for deadline := time.Now().Add(6 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		n.mu.Lock()
-		count := len(n.ids)
-		n.mu.Unlock()
-		if count >= 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("failure was never retried")
-		}
-	}
-}
-
-func TestRetryHonoursNewMuteAndReadState(t *testing.T) {
-	for _, mode := range []string{"read", "mute"} {
-		t.Run(mode, func(t *testing.T) {
-			s, err := store.Open(filepath.Join(t.TempDir(), "retry.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			id, _ := s.AddServer(store.Server{})
-			s.SaveReceivedMessages(id, []gotify.Message{{ID: 1, AppID: 1, Priority: 5}}, false)
-			n := &retryNotifier{failures: 1}
-			d := &Dispatcher{n: n, st: s, settings: DefaultSettings, planner: NewPlanner(), ctx: context.Background(), http: http.DefaultClient, icons: map[string]string{}, cacheDir: t.TempDir()}
-			job, _ := s.NextNotification(time.Now())
-			if err := d.process(job); err == nil {
-				t.Fatal("expected failure")
-			}
-			if mode == "read" {
-				s.MarkRead(id, 1)
-			} else {
-				s.SetAppPref(id, 1, store.AppPref{Muted: true})
-			}
-			job, _ = s.NextNotification(time.Now())
-			if err := d.process(job); err != nil {
-				t.Fatal(err)
-			}
-			if len(n.ids) != 1 {
-				t.Fatal("stale notification was retried")
-			}
-		})
+	s.SaveMessages(id, msgs)
+	d.Handle(conn.Event{Kind: conn.EventMessages, ServerID: id, CatchUp: true, Messages: msgs[:10]})
+	d.Handle(conn.Event{Kind: conn.EventMessages, ServerID: id, CatchUp: true, Messages: msgs[10:]})
+	n.unblock()
+	waitCount(t, n, 2)
+	if n.ids[1] != "s1-missed" {
+		t.Fatalf("%v", n.ids)
 	}
 }

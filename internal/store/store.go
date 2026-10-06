@@ -89,20 +89,7 @@ CREATE TABLE deleted_messages(
 	id INTEGER NOT NULL,
 	PRIMARY KEY(server_id, id)
 );
-`}, {sql: `ALTER TABLE server_state ADD COLUMN import_floor INTEGER NOT NULL DEFAULT 0;`}, {sql: `
-CREATE TABLE notification_outbox(
- id INTEGER PRIMARY KEY AUTOINCREMENT,
- server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
- messages TEXT NOT NULL,
- catch_up INTEGER NOT NULL,
- plans BLOB,
- attempts INTEGER NOT NULL DEFAULT 0,
- next_at INTEGER NOT NULL DEFAULT 0,
- created_at INTEGER NOT NULL
-);
-CREATE INDEX notification_outbox_ready ON notification_outbox(next_at,id);
-CREATE INDEX messages_unread ON messages(server_id,app_id) WHERE read=0;
-`}}
+`}, {sql: `ALTER TABLE server_state ADD COLUMN import_floor INTEGER NOT NULL DEFAULT 0;`}}
 
 type Store struct{ db *sql.DB }
 
@@ -364,29 +351,12 @@ SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_messages WHERE se
 // SaveMessages is the dedup point: it returns only newly inserted messages, ascending by id,
 // and advances last_seen_id in the same transaction.
 func (s *Store) SaveMessages(serverID int64, msgs []gotify.Message) ([]gotify.Message, error) {
-	return s.saveMessages(serverID, msgs, false, false, true)
-}
-
-// SaveReceivedMessages atomically commits messages, their cursor and notification work.
-func (s *Store) SaveReceivedMessages(serverID int64, msgs []gotify.Message, catchUp bool) ([]gotify.Message, error) {
-	return s.saveMessages(serverID, msgs, true, catchUp, true)
-}
-
-func (s *Store) saveMessages(serverID int64, msgs []gotify.Message, notify, catchUp, advance bool) ([]gotify.Message, error) {
 	var inserted []gotify.Message
 	err := s.tx(func(tx *sql.Tx) error {
 		var maxID uint
 		var err error
 		if inserted, maxID, err = insertMessages(tx, serverID, msgs); err != nil {
 			return err
-		}
-		if notify {
-			if err := queueNotifications(tx, serverID, inserted, catchUp); err != nil {
-				return err
-			}
-		}
-		if !advance {
-			return nil
 		}
 		_, err = tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized) VALUES(?,?,1)
 ON CONFLICT(server_id) DO UPDATE SET last_seen_id=max(last_seen_id,excluded.last_seen_id), initialized=1`, serverID, maxID)
@@ -409,9 +379,6 @@ func (s *Store) SaveInitialImport(serverID int64, live, history []gotify.Message
 			return err
 		}
 		if insertedHistory, maxHist, err = insertMessages(tx, serverID, history); err != nil {
-			return err
-		}
-		if err := queueNotifications(tx, serverID, insertedLive, false); err != nil {
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized,import_floor) VALUES(?,?,1,?)
@@ -643,17 +610,6 @@ func (s *Store) SetAppPref(serverID int64, appID uint, p AppPref) error {
 	}
 	_, err := s.db.Exec(`INSERT INTO app_prefs(server_id,app_id,muted,min_priority) VALUES(?,?,?,?)
 ON CONFLICT(server_id,app_id) DO UPDATE SET muted=excluded.muted, min_priority=excluded.min_priority`, serverID, appID, p.Muted, min)
-	return err
-}
-
-// SaveCatchUpBatch deliberately leaves the durable cursor unchanged: REST pages
-// arrive newest first, so advancing it before the last page could skip a gap
-// after a crash. Already committed pages are deduplicated on the next attempt.
-func (s *Store) SaveCatchUpBatch(serverID int64, msgs []gotify.Message, catchUp bool) ([]gotify.Message, error) {
-	return s.saveMessages(serverID, msgs, true, catchUp, false)
-}
-func (s *Store) FinishCatchUp(serverID int64, last uint) error {
-	_, err := s.db.Exec(`UPDATE server_state SET last_seen_id=max(last_seen_id,?) WHERE server_id=?`, last, serverID)
 	return err
 }
 
