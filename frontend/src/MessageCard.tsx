@@ -43,7 +43,7 @@ function PlainBody({ text }: { text: string }) {
   }
   parts.push(text.slice(last));
   return (
-    <Text as="p" display="block" className="msg-plain">
+    <Text as="p" display="block" className="msg-plain selectable">
       {parts}
     </Text>
   );
@@ -106,7 +106,7 @@ export const MessageCard = memo(function MessageCard({ msg, app, serverName, hig
                 <VStack gap={0.5} className="msg-main">
                   <HStack gap={2} vAlign="center">
                     {!msg.read && <StatusDot variant="accent" label={t.unread} />}
-                    <Text weight="semibold" maxLines={1}>
+                    <Text weight="semibold" maxLines={1} className="selectable">
                       {title}
                     </Text>
                   </HStack>
@@ -122,6 +122,7 @@ export const MessageCard = memo(function MessageCard({ msg, app, serverName, hig
                 (msg.markdown ? (
                   // Images in the body open in the viewer too.
                   <div
+                    className="selectable"
                     onClick={(e) => {
                       if (e.target instanceof HTMLImageElement) setViewing(e.target.currentSrc || e.target.src);
                     }}>

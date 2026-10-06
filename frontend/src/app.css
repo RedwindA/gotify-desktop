@@ -55,6 +55,8 @@ body {
 }
 
 .selectable {
+  /* Restore content selection inside ContextMenu's non-selectable trigger. */
+  -webkit-user-select: text;
   user-select: text;
 }
 
