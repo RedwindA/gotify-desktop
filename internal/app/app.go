@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -121,14 +122,20 @@ type App struct {
 	st   *store.Store
 	disp *notify.Dispatcher
 
-	rebuildMu sync.Mutex
-	mu        sync.Mutex
-	servers   map[int64]*runtime
-	closed    bool
-	snap      atomic.Pointer[Snapshot]
-	gen       uint64
-	msgGen    uint64
-	settings  atomic.Pointer[notify.Settings]
+	rebuildMu     sync.Mutex
+	mu            sync.Mutex
+	servers       map[int64]*runtime
+	closed        bool
+	snap          atomic.Pointer[Snapshot]
+	gen           uint64
+	msgGen        uint64
+	settings      atomic.Pointer[notify.Settings]
+	refresh       chan struct{}
+	refreshStop   chan struct{}
+	refreshDone   chan struct{}
+	refreshFlags  atomic.Uint32
+	metadataDirty atomic.Bool
+	appCache      map[int64][]AppInfo
 }
 
 func New(opts Options) (*App, error) {
@@ -139,15 +146,18 @@ func New(opts Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{opts: opts, st: st, servers: map[int64]*runtime{}}
+	a := &App{opts: opts, st: st, servers: map[int64]*runtime{}, refresh: make(chan struct{}, 1), refreshStop: make(chan struct{}), refreshDone: make(chan struct{})}
+	a.metadataDirty.Store(true)
 	s := a.loadSettings()
 	a.settings.Store(&s)
 	a.disp = notify.NewDispatcher(opts.Notifier, st, a.Settings, opts.CacheDir, nil)
 	servers, err := st.Servers()
 	if err != nil {
+		a.disp.Close()
 		st.Close()
 		return nil, err
 	}
+	go a.refreshLoop()
 	for _, sv := range servers {
 		a.startServer(sv)
 	}
@@ -157,6 +167,10 @@ func New(opts Options) (*App, error) {
 
 func (a *App) Close() {
 	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
 	a.closed = true
 	var sups []*conn.Supervisor
 	for _, rt := range a.servers {
@@ -168,6 +182,8 @@ func (a *App) Close() {
 	for _, s := range sups {
 		s.Stop()
 	}
+	close(a.refreshStop)
+	<-a.refreshDone
 	a.disp.Close()
 	a.st.Close()
 }
@@ -219,22 +235,54 @@ func (a *App) connect(id int64, rt *runtime) {
 	a.changed()
 }
 
+// Connection callbacks only update in-memory state and request a coalesced
+// rebuild. Database reads and image decoding never delay a supervisor.
 func (a *App) sink(ev conn.Event) {
-	switch ev.Kind {
-	case conn.EventState:
+	if ev.Kind == conn.EventState {
 		a.mu.Lock()
 		if rt := a.servers[ev.ServerID]; rt != nil {
 			rt.state, rt.err, rt.retryAt = ev.State, ev.Err, ev.RetryAt
 		}
 		a.mu.Unlock()
-		a.rebuild(false)
-	case conn.EventMessages:
-		a.rebuild(true)
-		a.disp.Handle(ev)
-	default:
-		a.rebuild(false)
 	}
-	a.changed()
+	if ev.Kind == conn.EventApps {
+		a.metadataDirty.Store(true)
+	}
+	if ev.Kind == conn.EventMessages {
+		a.disp.Handle(ev)
+	}
+	flag := uint32(1)
+	if ev.Kind == conn.EventMessages {
+		flag = 2
+	}
+	a.refreshFlags.Or(flag)
+	select {
+	case a.refresh <- struct{}{}:
+	default:
+	}
+}
+
+func (a *App) refreshLoop() {
+	defer close(a.refreshDone)
+	for {
+		select {
+		case <-a.refreshStop:
+			return
+		case <-a.refresh:
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-a.refreshStop:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		flags := a.refreshFlags.Swap(0)
+		if flags != 0 {
+			a.rebuild(flags&2 != 0)
+			a.changed()
+		}
+	}
 }
 
 func (a *App) changed() {
@@ -262,7 +310,14 @@ func (a *App) rebuild(messages bool) {
 	if err != nil {
 		return
 	}
-	unread, _ := a.st.UnreadCounts()
+	unread, err := a.st.UnreadCounts()
+	if err != nil {
+		log.Printf("snapshot unread counts: %v", err)
+		return
+	}
+	if a.metadataDirty.Swap(false) || a.appCache == nil {
+		a.appCache = map[int64][]AppInfo{}
+	}
 	snap := &Snapshot{Settings: a.Settings()}
 	for _, sv := range svs {
 		info := ServerInfo{ID: sv.ID, Name: sv.Name, URL: sv.URL, Insecure: sv.InsecureSkipVerify, HasCA: sv.CACertPEM != ""}
@@ -274,11 +329,26 @@ func (a *App) rebuild(messages bool) {
 			}
 		}
 		a.mu.Unlock()
-		apps, _ := a.st.Apps(sv.ID)
-		for _, ap := range apps {
-			pref, _ := a.st.GetAppPref(sv.ID, ap.ID)
-			ai := AppInfo{ID: ap.ID, Name: ap.Name, Description: ap.Description, DefaultPriority: ap.DefaultPriority,
-				Image: ap.Image, ImageKey: ImageKey(ap.Image), Unread: unread[sv.ID][ap.ID], Muted: pref.Muted, MinPriority: pref.MinPriority}
+		cached, ok := a.appCache[sv.ID]
+		if !ok {
+			apps, err := a.st.Apps(sv.ID)
+			if err != nil {
+				log.Printf("snapshot apps: %v", err)
+				return
+			}
+			prefs, err := a.st.AppPrefs(sv.ID)
+			if err != nil {
+				log.Printf("snapshot preferences: %v", err)
+				return
+			}
+			for _, ap := range apps {
+				pref := prefs[ap.ID]
+				cached = append(cached, AppInfo{ID: ap.ID, Name: ap.Name, Description: ap.Description, DefaultPriority: ap.DefaultPriority, Image: ap.Image, ImageKey: ImageKey(ap.Image), Muted: pref.Muted, MinPriority: pref.MinPriority})
+			}
+			a.appCache[sv.ID] = cached
+		}
+		for _, ai := range cached {
+			ai.Unread = unread[sv.ID][ai.ID]
 			info.Apps = append(info.Apps, ai)
 		}
 		for _, n := range unread[sv.ID] {
@@ -348,6 +418,12 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			revokeLogin(in.URL, in.User, in.Pass, clientID, gotify.Options{InsecureSkipVerify: in.Insecure, CACertPEM: in.CACertPEM})
+		}
+	}()
 	sv.ClientID = clientID
 	authed, err := a.clientFor(sv, token)
 	if err != nil {
@@ -355,7 +431,6 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 	}
 	me, err := authed.CurrentUser(ctx)
 	if err != nil {
-		revokeLogin(in.URL, in.User, in.Pass, clientID, gotify.Options{InsecureSkipVerify: in.Insecure, CACertPEM: in.CACertPEM})
 		return 0, err
 	}
 	sv.UserID, sv.UserName = me.ID, me.Name
@@ -365,9 +440,9 @@ func (a *App) AddServer(ctx context.Context, in ServerInput) (int64, error) {
 	}
 	sv.ID = id
 	if err := a.opts.Tokens.Set(id, token); err != nil {
-		a.st.DeleteServer(id)
-		return 0, errors.New(i18n.T("Couldn't store the token: %v", err))
+		return 0, errors.Join(errors.New(i18n.T("Couldn't store the token: %v", err)), a.st.DeleteServer(id))
 	}
+	committed = true
 	a.startServer(sv)
 	a.rebuild(false)
 	a.changed()
@@ -432,17 +507,21 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	if err != nil {
 		return err
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			revokeLogin(baseURL, user, pass, clientID, opts)
+		}
+	}()
 	client, err := a.clientFor(v.sv, token)
 	if err != nil {
 		return err
 	}
 	me, err := client.CurrentUser(ctx)
 	if err != nil {
-		revokeLogin(v.sv.URL, user, pass, clientID, opts)
 		return err
 	}
 	if v.sv.UserID != 0 && me.ID != v.sv.UserID {
-		revokeLogin(v.sv.URL, user, pass, clientID, opts)
 		return errors.New(i18n.T("This server was added as %s. Remove it and add it again to use another account.", v.sv.UserName))
 	}
 	v.rt.op.Lock()
@@ -450,18 +529,32 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	// The login was slow: apply it to the server as it is now, not as it was.
 	cur, err := a.runtimeOf(serverID)
 	if err != nil {
-		revokeLogin(baseURL, user, pass, clientID, opts)
 		return err
 	}
 	v = cur
+	// Build against the current TLS settings before changing either local store.
+	if _, err := a.clientFor(v.sv, token); err != nil {
+		return err
+	}
+	oldToken, tokenErr := a.opts.Tokens.Get(serverID)
+	if tokenErr != nil && !errors.Is(tokenErr, secret.ErrNotFound) {
+		return tokenErr
+	}
 	if err := a.opts.Tokens.Set(serverID, token); err != nil {
 		return errors.New(i18n.T("Couldn't store the token: %v", err))
 	}
 	sv := v.sv
 	sv.ClientID, sv.UserID, sv.UserName = clientID, me.ID, me.Name
 	if err := a.st.UpdateServer(sv); err != nil {
-		return err
+		var rollback error
+		if errors.Is(tokenErr, secret.ErrNotFound) {
+			rollback = a.opts.Tokens.Delete(serverID)
+		} else {
+			rollback = a.opts.Tokens.Set(serverID, oldToken)
+		}
+		return errors.Join(err, rollback)
 	}
+	committed = true
 	a.setServer(v.rt, sv)
 	v.sv = sv
 	if err := a.swapClient(v, token); err != nil {
@@ -519,12 +612,19 @@ func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
 	if v, err = a.runtimeOf(serverID); err != nil {
 		return err
 	}
-	if token, err := a.opts.Tokens.Get(serverID); err == nil && token != "" && v.sv.ClientID != 0 {
-		if client, err := a.clientFor(v.sv, token); err == nil {
-			cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			client.DeleteClient(cctx, v.sv.ClientID)
-			cancel()
+	token, tokenErr := a.opts.Tokens.Get(serverID)
+	if tokenErr != nil && !errors.Is(tokenErr, secret.ErrNotFound) {
+		return tokenErr
+	}
+	// Keep the runtime and remote client intact until both local stores agree.
+	if err := a.opts.Tokens.Delete(serverID); err != nil {
+		return err
+	}
+	if err := a.st.DeleteServer(serverID); err != nil {
+		if tokenErr == nil {
+			err = errors.Join(err, a.opts.Tokens.Set(serverID, token))
 		}
+		return err
 	}
 	if v.sup != nil {
 		v.sup.Stop()
@@ -532,12 +632,18 @@ func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
 	a.mu.Lock()
 	delete(a.servers, serverID)
 	a.mu.Unlock()
-	a.opts.Tokens.Delete(serverID)
-	if err := a.st.DeleteServer(serverID); err != nil {
-		return err
-	}
+	a.metadataDirty.Store(true)
 	a.rebuild(true)
 	a.changed()
+	if token != "" && v.sv.ClientID != 0 {
+		if client, err := a.clientFor(v.sv, token); err == nil {
+			cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if err := client.DeleteClient(cctx, v.sv.ClientID); err != nil {
+				log.Printf("remove server: revoke remote client: %v", err)
+			}
+			cancel()
+		}
+	}
 	return nil
 }
 
@@ -567,23 +673,25 @@ func (a *App) DeleteMessage(ctx context.Context, serverID int64, id uint) error 
 	return nil
 }
 
-func (a *App) MarkRead(serverID int64, ids ...uint) {
-	if a.st.MarkRead(serverID, ids...) != nil {
-		return
+func (a *App) MarkRead(serverID int64, ids ...uint) error {
+	if err := a.st.MarkRead(serverID, ids...); err != nil {
+		return err
 	}
 	for _, id := range ids {
 		a.opts.Notifier.Remove(fmt.Sprintf("s%d-m%d", serverID, id))
 	}
 	a.rebuild(true)
 	a.changed()
+	return nil
 }
 
-func (a *App) MarkAllRead(serverID int64, appID uint) {
-	if a.st.MarkAllRead(serverID, appID) != nil {
-		return
+func (a *App) MarkAllRead(serverID int64, appID uint) error {
+	if err := a.st.MarkAllRead(serverID, appID); err != nil {
+		return err
 	}
 	a.rebuild(true)
 	a.changed()
+	return nil
 }
 
 func (a *App) Messages(q store.MessageQuery) ([]store.StoredMessage, error) { return a.st.Messages(q) }
@@ -644,6 +752,7 @@ func (a *App) SetAppPref(serverID int64, appID uint, p store.AppPref) error {
 	if err := a.st.SetAppPref(serverID, appID, p); err != nil {
 		return err
 	}
+	a.metadataDirty.Store(true)
 	a.rebuild(false)
 	a.changed()
 	return nil
@@ -658,7 +767,9 @@ func (a *App) HandleActivation(id string) Activation {
 			act.AppID = msgs[0].AppID
 			act.ClickURL = notify.ClickURL(msgs[0].Extras)
 		}
-		a.MarkRead(serverID, msgID)
+		if err := a.MarkRead(serverID, msgID); err != nil {
+			log.Printf("mark activated message read: %v", err)
+		}
 	}
 	return act
 }

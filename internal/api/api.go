@@ -30,8 +30,8 @@ type Backend interface {
 	Snapshot() *app.Snapshot
 	Messages(q store.MessageQuery) ([]store.StoredMessage, error)
 	DeleteMessage(ctx context.Context, serverID int64, id uint) error
-	MarkRead(serverID int64, ids ...uint)
-	MarkAllRead(serverID int64, appID uint)
+	MarkRead(serverID int64, ids ...uint) error
+	MarkAllRead(serverID int64, appID uint) error
 	AddServer(ctx context.Context, in app.ServerInput) (int64, error)
 	Relogin(ctx context.Context, serverID int64, user, pass string) error
 	UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca []byte) error
@@ -163,12 +163,13 @@ type Navigation struct {
 
 // Query selects messages, newest first.
 type Query struct {
+	Before *store.MessageCursor `json:"before"`
 	// ServerID and AppID narrow the messages to a server and one of its apps; 0 is all.
 	ServerID int64  `json:"serverId"`
 	AppID    uint   `json:"appId"`
 	Search   string `json:"search"`
 	Limit    int    `json:"limit"`
-	// Include grows the page until it holds this message, if it is in the scope.
+	// Include starts a bounded page at this message, if it is in the scope.
 	Include *MessageRef `json:"include"`
 }
 
@@ -199,8 +200,9 @@ type Message struct {
 
 // MessagePage is a page of messages.
 type MessagePage struct {
-	Messages []Message `json:"messages"`
-	// HasMore is true when a larger limit would return more messages.
+	Next     *store.MessageCursor `json:"next"`
+	Messages []Message            `json:"messages"`
+	// HasMore is true when Next can load another page.
 	HasMore bool `json:"hasMore"`
 	// MsgGen is the State.MsgGen the page was read at.
 	MsgGen uint64 `json:"msgGen"`
@@ -437,45 +439,47 @@ const imageTimeout = 20 * time.Second
 // Messages returns the newest messages that match q.
 func (d *Desktop) Messages(q Query) (MessagePage, error) {
 	gen := d.be.Snapshot().MsgGen
-	limit := q.Limit
+	limit := min(q.Limit, 500)
 	if limit <= 0 {
 		limit = pageSize
 	}
-	for {
-		msgs, err := d.be.Messages(store.MessageQuery{ServerID: q.ServerID, AppID: q.AppID, Search: strings.TrimSpace(q.Search), Limit: limit + 1})
+	query := store.MessageQuery{ServerID: q.ServerID, AppID: q.AppID, Search: strings.TrimSpace(q.Search), Limit: limit + 1, Before: q.Before}
+	if q.Include != nil && q.Include.ServerID > 0 && q.Include.ID > 0 && (q.ServerID == 0 || q.ServerID == q.Include.ServerID) {
+		target, err := d.be.Messages(store.MessageQuery{ServerID: q.Include.ServerID, ID: q.Include.ID, AppID: q.AppID, Search: query.Search, Limit: 1})
 		if err != nil {
 			return MessagePage{}, err
 		}
-		more := len(msgs) > limit
-		if more {
-			msgs = msgs[:limit]
+		if len(target) > 0 {
+			m := target[0]
+			query.Before = &store.MessageCursor{Date: m.Date, ID: m.ID, ServerID: m.ServerID}
+			query.Inclusive = true
 		}
-		if q.Include != nil && more && !contains(msgs, *q.Include) {
-			limit += pageSize
-			continue
-		}
-		page := MessagePage{HasMore: more, MsgGen: gen, Messages: make([]Message, 0, len(msgs))}
-		for _, m := range msgs {
-			img := notify.BigImageURL(m.Extras)
-			src := ""
-			if img != "" {
-				src = fmt.Sprintf("%s%d/%d", d.plat.ImageBase, m.ServerID, m.ID)
-			}
-			page.Messages = append(page.Messages, Message{ServerID: m.ServerID, ID: m.ID, AppID: m.AppID, Title: m.Title,
-				Body: m.Message.Message, Markdown: isMarkdown(m.Extras), Priority: m.Priority, Date: m.Date, Read: m.Read,
-				ClickURL: notify.ClickURL(m.Extras), ImageURL: img, ImageSrc: src})
-		}
-		return page, nil
 	}
-}
-
-func contains(msgs []store.StoredMessage, r MessageRef) bool {
+	msgs, err := d.be.Messages(query)
+	if err != nil {
+		return MessagePage{}, err
+	}
+	more := len(msgs) > limit
+	if more {
+		msgs = msgs[:limit]
+	}
+	page := MessagePage{HasMore: more, MsgGen: gen, Messages: make([]Message, 0, len(msgs))}
 	for _, m := range msgs {
-		if m.ServerID == r.ServerID && m.ID == r.ID {
-			return true
+		img := notify.BigImageURL(m.Extras)
+		src := ""
+		if img != "" {
+			src = fmt.Sprintf("%s%d/%d", d.plat.ImageBase, m.ServerID, m.ID)
 		}
+		page.Messages = append(page.Messages, Message{ServerID: m.ServerID, ID: m.ID, AppID: m.AppID, Title: m.Title,
+			Body: m.Message.Message, Markdown: isMarkdown(m.Extras), Priority: m.Priority, Date: m.Date, Read: m.Read,
+			ClickURL: notify.ClickURL(m.Extras), ImageURL: img, ImageSrc: src})
 	}
-	return false
+
+	if more && len(msgs) > 0 {
+		m := msgs[len(msgs)-1]
+		page.Next = &store.MessageCursor{Date: m.Date, ID: m.ID, ServerID: m.ServerID}
+	}
+	return page, nil
 }
 
 func isMarkdown(extras map[string]any) bool {
@@ -485,21 +489,23 @@ func isMarkdown(extras map[string]any) bool {
 }
 
 // MarkRead marks messages of a server read.
-func (d *Desktop) MarkRead(serverID int64, ids []uint) {
-	if len(ids) > 0 {
-		d.be.MarkRead(serverID, ids...)
+func (d *Desktop) MarkRead(serverID int64, ids []uint) error {
+	if len(ids) == 0 {
+		return nil
 	}
+	return explain(d.be.MarkRead(serverID, ids...))
 }
 
-// MarkAllRead marks the messages of an app, a server (appID 0) or every server (serverID 0) read.
-func (d *Desktop) MarkAllRead(serverID int64, appID uint) {
+// MarkAllRead marks the selected app, server or all servers read.
+func (d *Desktop) MarkAllRead(serverID int64, appID uint) error {
 	if serverID != 0 {
-		d.be.MarkAllRead(serverID, appID)
-		return
+		return explain(d.be.MarkAllRead(serverID, appID))
 	}
+	var errs []error
 	for _, sv := range d.be.Snapshot().Servers {
-		d.be.MarkAllRead(sv.ID, 0)
+		errs = append(errs, d.be.MarkAllRead(sv.ID, 0))
 	}
+	return explain(errors.Join(errs...))
 }
 
 // DeleteMessage deletes a message on its server and here.

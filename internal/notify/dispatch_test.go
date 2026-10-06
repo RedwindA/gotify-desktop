@@ -63,7 +63,7 @@ func setup(t *testing.T, httpc *http.Client) (*Dispatcher, *fakeNotifier, *store
 	st.SetAppPref(sid, 2, store.AppPref{Muted: true})
 	var seeded []gotify.Message
 	for i := uint(1); i <= 20; i++ {
-		seeded = append(seeded, gotify.Message{ID: i, AppID: 1, Date: time.Now()})
+		seeded = append(seeded, gotify.Message{ID: i, AppID: 1, Priority: 5, Date: time.Now()})
 	}
 	st.SaveMessages(sid, seeded)
 	fn := newFakeNotifier()
@@ -75,7 +75,7 @@ func setup(t *testing.T, httpc *http.Client) (*Dispatcher, *fakeNotifier, *store
 
 func TestDispatcherWritesIconOnceAndHonoursPrefs(t *testing.T) {
 	d, fn, _, sid, cache := setup(t, nil)
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(1, 1, 5, "hi", "b"), msg(2, 2, 9, "muted", "")}})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(1, 1, 5, "hi", "b"), msg(2, 2, 9, "muted", "")}})
 	got := fn.wait(t, 1)
 	icon := filepath.Join(cache, "icons", "s1-a1.png")
 	if got[0].IconPath != icon || got[0].ID != "s1-m1" {
@@ -87,7 +87,7 @@ func TestDispatcherWritesIconOnceAndHonoursPrefs(t *testing.T) {
 	}
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(icon, old, old)
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(3, 1, 5, "again", "")}})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(3, 1, 5, "again", "")}})
 	fn.wait(t, 1)
 	st2, _ := os.Stat(icon)
 	if !st2.ModTime().Equal(old) || st1.Size() != st2.Size() {
@@ -123,7 +123,7 @@ func TestDispatcherImageDownload(t *testing.T) {
 		return m
 	}
 	for i, path := range []string{"/ok.png", "/fail", "/html", "/big.png"} {
-		d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{withImage(uint(i+1), path)}})
+		enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{withImage(uint(i+1), path)}})
 	}
 	got := fn.wait(t, 4)
 	if got[0].ImagePath == "" {
@@ -145,15 +145,15 @@ func TestDispatcherSummaryAndClose(t *testing.T) {
 	for i := uint(1); i <= 5; i++ {
 		msgs = append(msgs, msg(i, 1, 5, "t", ""))
 	}
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: msgs})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: msgs})
 	if got := fn.wait(t, 1); got[0].ID != "s1-missed" {
 		t.Fatalf("%+v", got)
 	}
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Silent: true, Messages: msgs})
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventState})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Silent: true, Messages: msgs})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventState})
 	d.Close()
 	d.Close()
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: msgs[:1]})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: msgs[:1]})
 	time.Sleep(50 * time.Millisecond)
 	if len(fn.got) != 1 {
 		t.Fatalf("unexpected notifications: %+v", fn.got)
@@ -167,7 +167,7 @@ func TestDispatcherSkipsDeletedAndReadMessages(t *testing.T) {
 	d, fn, st, sid, _ := setup(t, nil)
 	st.DeleteMessage(sid, 1)
 	st.MarkRead(sid, 2)
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(1, 1, 5, "deleted", ""), msg(2, 1, 5, "read", ""), msg(3, 1, 5, "fresh", "")}})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(1, 1, 5, "deleted", ""), msg(2, 1, 5, "read", ""), msg(3, 1, 5, "fresh", "")}})
 	got := fn.wait(t, 1)
 	time.Sleep(100 * time.Millisecond)
 	if len(fn.got) != 1 || got[0].Title != "fresh" {
@@ -178,7 +178,7 @@ func TestDispatcherSkipsDeletedAndReadMessages(t *testing.T) {
 	for i := uint(1); i <= 5; i++ {
 		many = append(many, msg(i, 1, 5, "t", ""))
 	}
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: many})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: many})
 	time.Sleep(150 * time.Millisecond)
 	if len(fn.got) != 1 {
 		t.Fatalf("summary for a removed server shown: %+v", fn.got)
@@ -198,7 +198,7 @@ func TestDispatcherDoesNotShowAfterReadDuringImageDownload(t *testing.T) {
 	d, fn, st, sid, _ := setup(t, srv.Client())
 	m := msg(1, 1, 5, "slow image", "")
 	m.Extras = map[string]any{"client::notification": map[string]any{"bigImageUrl": srv.URL + "/x.png"}}
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{m}})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{m}})
 	<-entered
 	st.MarkRead(sid, 1)
 	close(release)
@@ -215,14 +215,27 @@ func TestDispatcherDropsStaleMessagesBeforePlanning(t *testing.T) {
 	for i := uint(1); i <= 4; i++ {
 		four = append(four, msg(i, 1, 5, "t", ""))
 	}
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: four})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: four})
 	time.Sleep(200 * time.Millisecond)
 	if len(fn.got) != 0 {
 		t.Fatalf("summary of read messages shown: %+v", fn.got)
 	}
-	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: append(four, msg(5, 1, 5, "only fresh", ""))})
+	enqueue(t, d, conn.Event{ServerID: sid, Kind: conn.EventMessages, CatchUp: true, Messages: append(four, msg(5, 1, 5, "only fresh", ""))})
 	got := fn.wait(t, 1)
 	if len(got) != 1 || got[0].ID != "s1-m5" {
 		t.Fatalf("one fresh message should be shown on its own: %+v", got)
 	}
+}
+
+func enqueue(t *testing.T, d *Dispatcher, ev conn.Event) {
+	t.Helper()
+	if ev.Kind == conn.EventMessages && !ev.Silent && d.ctx.Err() == nil {
+		// A removed server should not produce new work.
+		if _, err := d.st.Server(ev.ServerID); err == nil {
+			if err := d.st.QueueNotifications(ev.ServerID, ev.Messages, ev.CatchUp); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	d.Handle(ev)
 }

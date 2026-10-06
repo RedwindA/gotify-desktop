@@ -127,6 +127,19 @@ type Planner struct {
 
 func NewPlanner() *Planner { return &Planner{burst: map[burstKey]*burstState{}} }
 
+// clone lets the dispatcher commit burst state only after plans are durable.
+func (p *Planner) clone() *Planner {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := NewPlanner()
+	for key, state := range p.burst {
+		cp := *state
+		cp.entries = append([]burstEntry(nil), state.entries...)
+		out.burst[key] = &cp
+	}
+	return out
+}
+
 func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]AppPrefs, s Settings, now time.Time) []Planned {
 	if ev.Kind != conn.EventMessages || ev.Silent {
 		return nil

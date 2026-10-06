@@ -6,6 +6,8 @@ import { useAppState } from "./store";
 const en = {
   appName: "Gotify Desktop",
   allMessages: "All messages",
+  viewingOlder: "Viewing older messages",
+  showLatest: "Show latest messages",
   allFromServer: "All from this server",
   addServer: "Add server",
   settings: "Settings",
@@ -133,6 +135,8 @@ export type Messages = typeof en;
 const zh: Messages = {
   appName: "Gotify Desktop",
   allMessages: "全部消息",
+  viewingOlder: "正在查看历史消息",
+  showLatest: "查看最新消息",
   allFromServer: "此服务器的全部消息",
   addServer: "添加服务器",
   settings: "设置",

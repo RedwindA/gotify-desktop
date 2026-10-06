@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,8 +32,8 @@ type FakeBackend struct {
 	Tested   atomic.Int32
 	// Images are the images FetchImage serves, by URL.
 	Images map[string][]byte
-	snap     atomic.Pointer[app.Snapshot]
-	gen      uint64
+	snap   atomic.Pointer[app.Snapshot]
+	gen    uint64
 }
 
 func NewFakeBackend() *FakeBackend {
@@ -88,10 +89,27 @@ func (f *FakeBackend) Messages(q store.MessageQuery) ([]store.StoredMessage, err
 		case q.Search != "" && !strings.Contains(strings.ToLower(m.Title+" "+m.Message.Message), strings.ToLower(q.Search)):
 			continue
 		}
-		out = append(out, m)
-		if q.Limit > 0 && len(out) == q.Limit {
-			break
+		if q.Before != nil {
+			c := q.Before
+			after := m.Date.Before(c.Date) || m.Date.Equal(c.Date) && (m.ID < c.ID || m.ID == c.ID && (m.ServerID > c.ServerID || q.Inclusive && m.ServerID == c.ServerID))
+			if !after {
+				continue
+			}
 		}
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if !a.Date.Equal(b.Date) {
+			return a.Date.After(b.Date)
+		}
+		if a.ID != b.ID {
+			return a.ID > b.ID
+		}
+		return a.ServerID < b.ServerID
+	})
+	if q.Limit > 0 && len(out) > q.Limit {
+		out = out[:q.Limit]
 	}
 	return out, nil
 }
@@ -113,7 +131,7 @@ func (f *FakeBackend) DeleteMessage(ctx context.Context, serverID int64, id uint
 	return nil
 }
 
-func (f *FakeBackend) MarkRead(serverID int64, ids ...uint) {
+func (f *FakeBackend) MarkRead(serverID int64, ids ...uint) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.Msgs {
@@ -124,9 +142,10 @@ func (f *FakeBackend) MarkRead(serverID int64, ids ...uint) {
 		}
 	}
 	f.refresh()
+	return nil
 }
 
-func (f *FakeBackend) MarkAllRead(serverID int64, appID uint) {
+func (f *FakeBackend) MarkAllRead(serverID int64, appID uint) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.Msgs {
@@ -135,6 +154,7 @@ func (f *FakeBackend) MarkAllRead(serverID int64, appID uint) {
 		}
 	}
 	f.refresh()
+	return nil
 }
 
 func (f *FakeBackend) AddServer(ctx context.Context, in app.ServerInput) (int64, error) {
