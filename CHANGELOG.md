@@ -2,6 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.2.1
+
+- On macOS, right-clicking a message shows its menu again, and selected text stays selected while the menu is open.
+- The Copy text button in the reading pane shows a check after copying.
+
 ## 0.2.0
 
 - Messages show in a mail-style layout: a list and a reading pane, or one pane in a narrow window. Arrow keys, Delete, Ctrl+F and Escape work in the list.

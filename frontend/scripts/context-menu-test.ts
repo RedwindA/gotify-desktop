@@ -97,6 +97,11 @@ try {
     await copySelected.click();
     if (cdp) assert.equal(readClipboard(), expected, "native clipboard must contain the selection snapshot");
     else assert.deepEqual(await page.evaluate(() => (window as any).__copied), [expected], "copy must use the snapshot, even after focus clears the selection");
+    // Closing the menu puts the selection back, as WebKit drops it when the menu takes focus.
+    // The restore runs in a task queued as the menu closed; this one runs after it.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
+    assert.equal(await page.evaluate(() => window.getSelection()!.toString()), expected, "closing the menu must restore the selection");
+    await page.evaluate(() => window.getSelection()!.removeAllRanges());
     await card.click({ button: "right" });
     await copyAll.waitFor();
     assert.equal(await copySelected.count(), 0, "a reopened menu must not retain stale text");

@@ -2,7 +2,7 @@ import { ContextMenu } from "@astryxdesign/core/ContextMenu";
 import { Lightbox } from "@astryxdesign/core/Lightbox";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { Text } from "@astryxdesign/core/Text";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
 
@@ -110,22 +110,66 @@ export function MessageBody({ msg, title }: { msg: Message; title: string }) {
   );
 }
 
-/** The row and the reading pane share one menu. The snapshot is taken inside `root` only. */
+function restoreSelection(range: Range) {
+  if (!range.startContainer.isConnected || !range.endContainer.isConnected) return;
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+/**
+ * The row and the reading pane share one menu. The selection is taken inside `root` only,
+ * when the contextmenu event arrives. WebKit drops it while the menu is open, so it is put
+ * back whenever it goes, and once more after the menu closes, unless a click closed it.
+ */
 export function useMessageMenu(msg: Message, root: { readonly current: HTMLElement | null }, deleting: boolean, onDelete: (msg: Message) => void) {
   const t = useT();
   const [selectedText, setSelectedText] = useState("");
-  const onOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) return;
-      // Snapshot before the menu takes focus; never copy a different message's selection.
+  const kept = useRef<Range | null>(null);
+  const pressedOutside = useRef(false);
+  const stopWatching = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    // Never copy a different message's selection.
+    const onMenu = () => {
       const selection = window.getSelection();
-      const el = root.current;
-      setSelectedText(
-        selection && !selection.isCollapsed && el?.contains(selection.anchorNode) && el?.contains(selection.focusNode) ? selection.toString() : "",
-      );
-    },
-    [root],
-  );
+      const inside =
+        selection && selection.rangeCount > 0 && !selection.isCollapsed && el.contains(selection.anchorNode) && el.contains(selection.focusNode);
+      kept.current = inside ? selection.getRangeAt(0).cloneRange() : null;
+      setSelectedText(inside ? selection.toString() : "");
+    };
+    el.addEventListener("contextmenu", onMenu, true);
+    return () => el.removeEventListener("contextmenu", onMenu, true);
+  }, [root]);
+  const onOpenChange = useCallback((open: boolean) => {
+    stopWatching.current?.();
+    stopWatching.current = null;
+    const range = kept.current;
+    if (!range) return;
+    if (!open) {
+      kept.current = null;
+      // A press outside the menu closed it, and that press placed a selection of its own.
+      // Otherwise restore after the menu hands focus back.
+      if (!pressedOutside.current) setTimeout(() => restoreSelection(range));
+      return;
+    }
+    // WebKit clears it as the menu focuses an item and again as the right button comes up.
+    pressedOutside.current = false;
+    const onPress = (e: MouseEvent) => {
+      if (!(e.target instanceof Element && e.target.closest('[role="menu"]'))) pressedOutside.current = true;
+    };
+    const onSelectionChange = () => {
+      if (!pressedOutside.current && window.getSelection()?.isCollapsed !== false) restoreSelection(range);
+    };
+    document.addEventListener("mousedown", onPress, true);
+    document.addEventListener("selectionchange", onSelectionChange);
+    stopWatching.current = () => {
+      document.removeEventListener("mousedown", onPress, true);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, []);
+  useEffect(() => () => stopWatching.current?.(), []);
   const items = [
     ...(selectedText ? [{ label: t.copySelectedText, onClick: () => void Desktop.copyText(selectedText) }] : []),
     { label: t.copyText, onClick: () => void Desktop.copyText(msg.body) },

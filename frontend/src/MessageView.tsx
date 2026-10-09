@@ -4,8 +4,8 @@ import { ContextMenu } from "@astryxdesign/core/ContextMenu";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { Timestamp } from "@astryxdesign/core/Timestamp";
-import { CopyIcon, ExternalLinkIcon, ImageIcon, Trash2Icon } from "lucide-react";
-import { memo, useRef } from "react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, ImageIcon, Trash2Icon } from "lucide-react";
+import { memo, useEffect, useRef, useState } from "react";
 import { MessageBody, openMessageLink, useMessageMenu } from "./MessageCard";
 import { Desktop, type App, type Message } from "./mygo";
 import { useT } from "./i18n";
@@ -23,6 +23,13 @@ export const MessageView = memo(function MessageView({ msg, app, serverName, del
   const t = useT();
   const root = useRef<HTMLDivElement>(null);
   const { items, onOpenChange } = useMessageMenu(msg, root, deleting, onDelete);
+  // Counts copies; the check shows while it is non-zero and pops again on each copy.
+  const [copied, setCopied] = useState(0);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(0), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
   const title = msg.title || app?.name || t.message;
   const meta = [app?.name, serverName].filter(Boolean).join(" · ");
   return (
@@ -42,13 +49,17 @@ export const MessageView = memo(function MessageView({ msg, app, serverName, del
               />
             )}
             <Button
-              label={t.copyText}
+              label={copied ? t.copied : t.copyText}
               size="sm"
               variant="ghost"
               isIconOnly
-              icon={<CopyIcon size={16} />}
+              icon={copied ? <CheckIcon key={copied} size={16} className="copy-done" /> : <CopyIcon size={16} />}
               tooltip={t.copyText}
-              onClick={() => void Desktop.copyText(msg.body)}
+              onClick={() =>
+                void Desktop.copyText(msg.body)
+                  .then(() => setCopied((n) => n + 1))
+                  .catch(() => {})
+              }
             />
             {msg.imageUrl && (
               <Button
