@@ -21,6 +21,7 @@ import (
 
 	"gotify-desktop/internal/api"
 	"gotify-desktop/internal/app"
+	"gotify-desktop/internal/appearance"
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
@@ -69,14 +70,21 @@ func main() {
 		imageBase = "http://" + imageScheme + ".localhost/"
 	}
 	d.api = api.New(api.Platform{
-		Version:        mygo.App.Version(),
-		OpenAtLogin:    mygo.App.OpenAtLogin,
-		SetOpenAtLogin: mygo.App.SetOpenAtLogin,
-		PickCA:         d.pickCA,
-		OpenURL:        func(u string) { mygo.Shell.OpenExternal(u) },
-		CopyText:       mygo.Clipboard.WriteText,
-		ImageBase:      imageBase,
+		Version:         mygo.App.Version(),
+		OpenAtLogin:     mygo.App.OpenAtLogin,
+		SetOpenAtLogin:  mygo.App.SetOpenAtLogin,
+		PickCA:          d.pickCA,
+		OpenURL:         func(u string) { mygo.Shell.OpenExternal(u) },
+		CopyText:        mygo.Clipboard.WriteText,
+		ImageBase:       imageBase,
+		Confirm:         d.confirm,
+		Appearance:      systemAppearance,
+		CheckForUpdates: updater.CheckForUpdates,
 	})
+	// Before Run, so macOS never installs the default menu (it has Reload and zoom).
+	if runtime.GOOS == "darwin" {
+		mygo.App.SetMenu(d.applicationMenu())
+	}
 	mygo.Bind(d.api.Service())
 	mygo.Protocol.Handle(imageScheme, d.api.ImageHandler())
 	mygo.App.OnSecondInstance(func(args []string, _ string) {
@@ -163,6 +171,8 @@ type desktop struct {
 	trayState  string
 	pauseTimer *time.Timer
 	theme      *string // the appearance last applied, on the main thread
+	menuHave   bool    // an application menu was installed for the language in menuLang
+	menuLang   string
 }
 
 func (d *desktop) start() {
@@ -195,6 +205,7 @@ func (d *desktop) start() {
 		return
 	}
 	d.applyTheme(d.ctrl.Settings().Theme)
+	d.installAppMenu()
 	d.api.Start(d.ctrl, dataDir)
 
 	d.notifier.OnActivate(d.activated)
@@ -263,15 +274,24 @@ func (d *desktop) showWindow() {
 			w.Focus()
 			return
 		}
-		w = mygo.NewWindow(mygo.WindowOptions{
+		opts := mygo.WindowOptions{
 			Title: appName, Width: 1100, Height: 740, MinWidth: 420, MinHeight: 480,
 			StateKey: "main", URL: "/",
 			// The page draws the title bar: the sidebar and the page headers
 			// move the window, with the system's window controls over them.
 			TitleBarStyle: mygo.TitleBarHiddenInset,
+			// The page's toolbar is one 48px row. Caption buttons fill it on
+			// Windows and are centered in it on Linux; macOS keeps the traffic lights.
+			TitleBarHeight: 48,
 			// The page's body background (--color-background-body of the neutral theme).
+			// It also paints the first frame over a material, so that frame is not white.
 			BackgroundColor: "light-dark(#f1f1f1, #1b1b1b)",
-		})
+		}
+		if windowMaterial() != api.MaterialNone {
+			opts.Transparent = true
+			opts.Vibrancy = mygo.VibrancySidebar
+		}
+		w = mygo.NewWindow(opts)
 		w.SetIcon(appIcon)
 		// Links in messages open in the browser, never in the window.
 		w.Page().OnWillNavigate(func(e *mygo.NavigateEvent) {
@@ -312,6 +332,86 @@ func (d *desktop) activated(id string) {
 func isAppOrigin(u *url.URL) bool {
 	h := u.Hostname()
 	return h == "mygo.localhost" || h == "localhost" || h == "127.0.0.1"
+}
+
+func systemAppearance() api.Appearance {
+	return api.Appearance{Accent: appearance.Accent(), Material: windowMaterial()}
+}
+
+// confirm asks in a native message box. Cancel is the default and the Escape
+// button; index 0 would mean "a button named Cancel", which a custom label is not.
+// mygo has no destructive-button style, so a destructive question uses the warning icon.
+func (d *desktop) confirm(_ context.Context, c api.Confirmation) (bool, error) {
+	res, err := mygo.Dialog.Message(confirmDialog(d.window(), c))
+	if err != nil {
+		return false, err
+	}
+	return res.Button == 0, nil
+}
+
+func confirmDialog(parent *mygo.Window, c api.Confirmation) mygo.MessageOptions {
+	kind := mygo.MessageQuestion
+	if c.Destructive {
+		kind = mygo.MessageWarning
+	}
+	// The question is the bold main text (macOS's message text, the main
+	// instruction of a Windows task dialog) and the explanation goes below it.
+	message, detail := c.Title, c.Message
+	if message == "" {
+		message, detail = c.Message, ""
+	}
+	return mygo.MessageOptions{
+		Parent: parent, Type: kind, Title: appName, Message: message, Detail: detail,
+		Buttons: []string{c.ConfirmLabel, c.CancelLabel}, DefaultButton: 1, CancelButton: 1,
+	}
+}
+
+// runCommand opens the window, then asks the page to run cmd. A page that is
+// not loaded yet still receives it, through TakeCommand.
+func (d *desktop) runCommand(cmd api.Command) {
+	d.showWindow()
+	d.api.Command(cmd)
+}
+
+// installAppMenu sets the macOS menu bar. Windows and Linux have none: the
+// page handles Ctrl+, and Ctrl+N. It runs on the main thread.
+func (d *desktop) installAppMenu() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	lang := string(i18n.Current())
+	if d.menuHave && d.menuLang == lang {
+		return
+	}
+	d.menuHave = true
+	d.menuLang = lang
+	mygo.App.SetMenu(d.applicationMenu())
+}
+
+func (d *desktop) applicationMenu() *mygo.Menu {
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: appName, Submenu: []*mygo.MenuItem{
+			{Label: i18n.T("About Gotify Desktop"), Role: mygo.RoleAbout},
+			mygo.Separator(),
+			{Label: i18n.T("Settings…"), Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) { d.runCommand(api.CommandSettings) }},
+			{Label: i18n.T("Check for Updates…"), Click: func(*mygo.MenuItem, *mygo.Window) { updater.CheckForUpdates() }},
+			mygo.Separator(),
+			// The role alone is not a submenu, so macOS would not fill Services.
+			{Label: i18n.T("Services"), Role: mygo.RoleServices, Submenu: []*mygo.MenuItem{}},
+			{Label: i18n.T("Hide Gotify Desktop"), Role: mygo.RoleHide},
+			{Label: i18n.T("Hide Others"), Role: mygo.RoleHideOthers},
+			{Label: i18n.T("Show All"), Role: mygo.RoleUnhide},
+			mygo.Separator(),
+			{Label: i18n.T("Quit Gotify Desktop"), Role: mygo.RoleQuit},
+		}},
+		{Label: i18n.T("File"), Submenu: []*mygo.MenuItem{
+			{Label: i18n.T("Add Server…"), Accelerator: "Cmd+N", Click: func(*mygo.MenuItem, *mygo.Window) { d.runCommand(api.CommandAddServer) }},
+			mygo.Separator(),
+			{Label: i18n.T("Close Window"), Role: mygo.RoleClose},
+		}},
+		{Label: i18n.T("Edit"), Role: mygo.RoleEditMenu},
+		{Label: i18n.T("Window"), Role: mygo.RoleWindowMenu},
+	})
 }
 
 func (d *desktop) pickCA(context.Context) (string, []byte, error) {
@@ -383,6 +483,7 @@ func (d *desktop) applyTray() {
 	}
 	snap := d.ctrl.Snapshot()
 	d.applyTheme(snap.Settings.Theme)
+	d.installAppMenu()
 	offline := false
 	for _, sv := range snap.Servers {
 		if sv.State != conn.Connected {

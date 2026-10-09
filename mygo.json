@@ -1,7 +1,7 @@
 {
   "name": "Gotify Desktop",
   "identifier": "com.austin.gotifydesktop",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "copyright": "Copyright © 2026 RedwindA",
   "devUrl": "http://localhost:5173",
   "devCommand": "bun run --cwd frontend dev",

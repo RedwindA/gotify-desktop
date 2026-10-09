@@ -56,6 +56,13 @@ type Platform struct {
 	// ImageBase is the URL under which the desktop serves ImageHandler, ending
 	// in a slash; the page loads the images of messages from there.
 	ImageBase string
+	// Confirm asks a question in a native message box and reports whether the
+	// user confirmed; without it the page asks in its own dialog.
+	Confirm func(ctx context.Context, c Confirmation) (bool, error)
+	// Appearance returns the system's accent color and the window's material.
+	Appearance func() Appearance
+	// CheckForUpdates opens the update window, which checks right away.
+	CheckForUpdates func()
 }
 
 // StateChanged carries the new state after every change.
@@ -63,6 +70,56 @@ var StateChanged = mygo.NewEvent[State]("state")
 
 // NavigateRequested asks the page to show a message, after a notification was clicked.
 var NavigateRequested = mygo.NewEvent[Navigation]("navigate")
+
+// CommandRequested asks the page to run a command of the app's menu.
+var CommandRequested = mygo.NewEvent[Command]("command")
+
+// Command is a command of the app's menu that the page carries out.
+type Command string
+
+const (
+	CommandSettings  Command = "settings"
+	CommandAddServer Command = "addServer"
+)
+
+// Confirmation is a question for Confirm.
+type Confirmation struct {
+	Title        string `json:"title"`
+	Message      string `json:"message"`
+	ConfirmLabel string `json:"confirmLabel"`
+	CancelLabel  string `json:"cancelLabel"`
+	// Destructive marks the confirming button as one that deletes data.
+	Destructive bool `json:"destructive"`
+}
+
+// ConfirmAnswer is the answer to a Confirmation.
+type ConfirmAnswer string
+
+const (
+	ConfirmYes ConfirmAnswer = "yes"
+	ConfirmNo  ConfirmAnswer = "no"
+	// ConfirmUnavailable means there is no native message box: the page asks itself.
+	ConfirmUnavailable ConfirmAnswer = "unavailable"
+)
+
+// Material is what the window shows behind the transparent parts of the page.
+type Material string
+
+const (
+	// MaterialNone is an opaque window: the page paints all of it.
+	MaterialNone Material = ""
+	// MaterialMica is Windows 11's Mica.
+	MaterialMica Material = "mica"
+	// MaterialSidebar is the sidebar material of macOS.
+	MaterialSidebar Material = "sidebar"
+)
+
+// Appearance is what the page takes from the system.
+type Appearance struct {
+	// Accent is the system's accent color as #rrggbb, or "" when unknown.
+	Accent   string   `json:"accent"`
+	Material Material `json:"material"`
+}
 
 // ConnState is the state of a server's connection.
 type ConnState string
@@ -248,6 +305,7 @@ type Controller struct {
 	closed    atomic.Bool
 	emitState func(State)
 	emitNav   func(Navigation)
+	emitCmd   func(Command)
 	// settle delays a state broadcast so that bursts of changes send one.
 	settle time.Duration
 }
@@ -259,6 +317,7 @@ func New(plat Platform) *Controller {
 		svc:       &Desktop{plat: plat},
 		emitState: func(s State) { StateChanged.Broadcast(s) },
 		emitNav:   func(n Navigation) { NavigateRequested.Broadcast(n) },
+		emitCmd:   func(c Command) { CommandRequested.Broadcast(c) },
 		settle:    50 * time.Millisecond,
 	}
 }
@@ -304,6 +363,18 @@ func (c *Controller) Navigate(n Navigation) {
 	c.emitNav(n)
 }
 
+// Command asks pages to run a command of the app's menu. A page that is not
+// loaded yet takes it with TakeCommand.
+func (c *Controller) Command(cmd Command) {
+	if c.closed.Load() {
+		return
+	}
+	c.svc.mu.Lock()
+	c.svc.pendingCmd = &cmd
+	c.svc.mu.Unlock()
+	c.emitCmd(cmd)
+}
+
 // Desktop is the service the page calls.
 type Desktop struct {
 	be      Backend
@@ -312,6 +383,7 @@ type Desktop struct {
 
 	mu         sync.Mutex
 	pendingNav *Navigation
+	pendingCmd *Command
 	// settingsMu serializes settings writes, which read, change and write them.
 	settingsMu sync.Mutex
 	// settingsSeq is the sequence number of the newest settings write.
@@ -680,6 +752,39 @@ func (d *Desktop) CopyText(text string) {
 	}
 }
 
+// Confirm asks a question in a native message box. It answers "unavailable"
+// when there is none, for the page to ask in its own dialog.
+func (d *Desktop) Confirm(ctx context.Context, c Confirmation) (ConfirmAnswer, error) {
+	if d.plat.Confirm == nil {
+		return ConfirmUnavailable, nil
+	}
+	ok, err := d.plat.Confirm(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return ConfirmYes, nil
+	}
+	return ConfirmNo, nil
+}
+
+// CheckForUpdates checks for a newer version in the update window.
+func (d *Desktop) CheckForUpdates() error {
+	if d.plat.CheckForUpdates == nil {
+		return errors.New(i18n.T("Checking for updates is not available."))
+	}
+	d.plat.CheckForUpdates()
+	return nil
+}
+
+// SystemAppearance returns the system's accent color and the window's material.
+func (d *Desktop) SystemAppearance() Appearance {
+	if d.plat.Appearance == nil {
+		return Appearance{}
+	}
+	return d.plat.Appearance()
+}
+
 // TakeNavigation returns the navigation a clicked notification asked for, once, or null.
 func (d *Desktop) TakeNavigation() *Navigation {
 	d.mu.Lock()
@@ -687,6 +792,15 @@ func (d *Desktop) TakeNavigation() *Navigation {
 	n := d.pendingNav
 	d.pendingNav = nil
 	return n
+}
+
+// TakeCommand returns the command the app's menu asked for, once, or null.
+func (d *Desktop) TakeCommand() *Command {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	c := d.pendingCmd
+	d.pendingCmd = nil
+	return c
 }
 
 func caOf(pem string) ([]byte, error) {

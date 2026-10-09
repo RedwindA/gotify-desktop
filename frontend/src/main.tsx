@@ -9,6 +9,7 @@ import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import { StrictMode, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { installShell } from "./desktop";
 import { astryxMessages, useLang } from "./i18n";
 import { start, useAppState } from "./store";
 
@@ -37,6 +38,8 @@ function Localized({ children }: { children: ReactNode }) {
 
 // Thin scrollbars drawn by app.css, except on macOS, whose own already are.
 if (!/Mac/.test(navigator.userAgent)) document.documentElement.classList.add("custom-scrollbars");
+
+installShell();
 
 // ?theme=dark or ?theme=light forces an appearance, for screenshots.
 const forced = new URLSearchParams(location.search).get("theme");

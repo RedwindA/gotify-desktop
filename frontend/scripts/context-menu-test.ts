@@ -31,7 +31,7 @@ try {
   browser = cdp ? await chromium.connectOverCDP(cdp) : await chromium.launch({
     executablePath: process.env.CHROME ?? (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome"),
   });
-  const page = cdp ? browser.contexts()[0]!.pages()[0]! : await browser.newPage({ viewport: { width: 1100, height: 760 } });
+  const page = cdp ? browser.contexts()[0]!.pages()[0]! : await browser.newPage({ viewport: { width: 1400, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   if (url) await page.goto(url);
@@ -72,8 +72,10 @@ try {
     }), [true, true, false]);
     const cards = page.locator("[data-key]");
     const card = cards.first();
-    const copySelected = page.getByRole("menuitem", { name: /^(Copy selected text|复制选中文字)$/ });
-    const copyAll = page.getByRole("menuitem", { name: /^(Copy text|复制文本)$/ });
+    // The open row menu is the one inside the list. The reading pane has a context menu of its own.
+    const list = page.getByRole("listbox");
+    const copySelected = list.getByRole("menuitem", { name: /^(Copy selected text|复制选中文字)$/ });
+    const copyAll = list.getByRole("menuitem", { name: /^(Copy text|复制文本)$/ });
     await card.click({ button: "right" });
     await copyAll.waitFor();
     assert.equal(await copySelected.count(), 0, "no selection must not offer selected-text copy");
@@ -110,15 +112,15 @@ try {
     assert.equal(await copySelected.count(), 0, "another card's selection must not leak into this menu");
     await page.keyboard.press("Escape");
     await page.evaluate(() => window.getSelection()!.removeAllRanges());
-    await card.getByRole("button", { name: /^(Message actions|消息操作)$/ }).click();
-    await copyAll.waitFor();
-    await page.keyboard.press("Escape");
-    await card.getByRole("button", { name: /^(Message actions|消息操作)$/ }).focus();
+    await card.click();
+    await page.getByRole("button", { name: /^(Copy text|复制文本)$/ }).waitFor();
+    assert.equal(await page.getByRole("button", { name: /^(Message actions|消息操作)$/ }).count(), 0, "the reading pane has its actions as buttons, not a More menu");
+    await card.focus();
     await page.keyboard.press("Shift+F10");
     await copyAll.waitFor();
     await page.keyboard.press("Escape");
     assert.deepEqual(errors, []);
-    console.log(`PASS (${cdp ? "WebView2" : "preview"}): menu suppression, native editing, selection snapshot, stale/other-card selection, whole-message copy, More menu and Shift+F10`);
+    console.log(`PASS (${cdp ? "WebView2" : "preview"}): menu suppression, native editing, selection snapshot, stale/other-card selection, whole-message copy, reading-pane actions and Shift+F10`);
   } finally {
     if (!cdp) await page.evaluate(() => { (window as any).__restoreCopy(); delete (window as any).__restoreCopy; delete (window as any).__copied; });
   }

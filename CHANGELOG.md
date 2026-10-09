@@ -2,6 +2,14 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.2.0
+
+- Messages show in a mail-style layout: a list and a reading pane, or one pane in a narrow window. Arrow keys, Delete, Ctrl+F and Escape work in the list.
+- The window looks like a desktop app: Mica on Windows 11 and the sidebar material on macOS, the system accent color and font, and one 48px title bar row.
+- Browser behaviour is gone: no page zoom, reload, print or find, no text selection outside messages, and dropped files no longer open in the window.
+- Removing a server asks in a native dialog. Ctrl+, opens Settings and Ctrl+N adds a server; macOS gets a menu bar with both.
+- Settings has Check for updates and a link to the source code on GitHub.
+
 ## 0.1.6
 
 - Opening a notification for the newest message stays on the latest messages, so "Viewing older messages" only appears when newer ones exist.

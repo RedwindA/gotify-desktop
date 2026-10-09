@@ -1,24 +1,30 @@
-import { Badge } from "@astryxdesign/core/Badge";
-import { Button } from "@astryxdesign/core/Button";
-import { Card } from "@astryxdesign/core/Card";
 import { ContextMenu } from "@astryxdesign/core/ContextMenu";
-import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Lightbox } from "@astryxdesign/core/Lightbox";
 import { Markdown } from "@astryxdesign/core/Markdown";
-import { MoreMenu } from "@astryxdesign/core/MoreMenu";
-import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Text } from "@astryxdesign/core/Text";
-import { Timestamp } from "@astryxdesign/core/Timestamp";
-import { ExternalLinkIcon } from "lucide-react";
-import { memo, useCallback, useRef, useState, type ReactNode } from "react";
-import { Desktop, type App, type Message } from "./mygo";
+import { useCallback, useRef, useState, type ReactNode } from "react";
+import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
-import { AppAvatar } from "./Sidebar";
 
 const urlPattern = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g;
 
-function openLink(href: string) {
+export function openMessageLink(href: string) {
+  if (!href) return;
   void Desktop.openURL(href).catch(() => {});
+}
+
+/** One line for the list: images and links become their text, and markdown markers go. */
+export function previewText(body: string): string {
+  return body
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)]\([^)]*\)/g, "$1")
+    .replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/gm, " ")
+    .replace(/\s*\|\s*/g, " ")
+    .replace(/[#*_>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Plain text with its URLs as links; newlines are kept by the CSS. */
@@ -34,7 +40,7 @@ function PlainBody({ text }: { text: string }) {
         href={href}
         onClick={(e) => {
           e.preventDefault();
-          openLink(href);
+          openMessageLink(href);
         }}>
         {href}
       </a>,
@@ -71,104 +77,83 @@ function MessageImage({ src, onView }: { src: string; onView(src: string): void 
   );
 }
 
-export interface MessageCardProps {
-  msg: Message;
-  app: App | undefined;
-  serverName: string | undefined;
-  highlighted: boolean;
-  deleting: boolean;
-  onDelete(msg: Message): void;
-}
-
-export const MessageCard = memo(function MessageCard({ msg, app, serverName, highlighted, deleting, onDelete }: MessageCardProps) {
-  const t = useT();
+export function MessageBody({ msg, title }: { msg: Message; title: string }) {
   const [viewing, setViewing] = useState<string | null>(null);
-  const card = useRef<HTMLDivElement>(null);
-  const [selectedText, setSelectedText] = useState("");
-  const captureSelection = useCallback((open: boolean) => {
-    if (!open) return;
-    // Snapshot before the menu takes focus; never copy a different card's selection.
-    const selection = window.getSelection();
-    setSelectedText(selection && !selection.isCollapsed && card.current?.contains(selection.anchorNode) && card.current?.contains(selection.focusNode)
-      ? selection.toString() : "");
-  }, []);
-  const title = msg.title || app?.name || t.message;
-  const items = [
-    ...(selectedText ? [{ label: t.copySelectedText, onClick: () => void Desktop.copyText(selectedText) }] : []),
-    { label: t.copyText, onClick: () => void Desktop.copyText(msg.body) },
-    ...(msg.clickUrl ? [{ label: t.openLink, onClick: () => openLink(msg.clickUrl) }] : []),
-    ...(msg.imageUrl ? [{ label: t.openImageInBrowser, onClick: () => openLink(msg.imageUrl) }] : []),
-    { type: "divider" as const },
-    { label: t.delete, variant: "destructive" as const, isDisabled: deleting, onClick: () => onDelete(msg) },
-  ];
-  const meta = [app?.name, serverName].filter(Boolean).join(" · ");
   return (
     <>
-      <ContextMenu items={items} label={t.messageActions} onOpenChange={captureSelection}>
-        <Card
-          ref={card}
-          className={"msg-card" + (highlighted ? " msg-highlight" : "") + (deleting ? " msg-deleting" : "")}
-          data-key={`${msg.serverId}/${msg.id}`}
-          data-unread={msg.read ? undefined : "true"}>
-          <HStack gap={3} vAlign="start">
-            <AppAvatar serverId={msg.serverId} app={app} size="md" />
-            <VStack gap={2} className="msg-main">
-              <HStack gap={2} vAlign="center">
-                <VStack gap={0.5} className="msg-main">
-                  <HStack gap={2} vAlign="center">
-                    {!msg.read && <StatusDot variant="accent" label={t.unread} />}
-                    <Text weight="semibold" maxLines={1} className="selectable">
-                      {title}
-                    </Text>
-                  </HStack>
-                  <HStack gap={1} vAlign="center">
-                    {meta && <Text type="supporting">{meta} ·</Text>}
-                    <Timestamp value={msg.date} format="auto" isLive />
-                  </HStack>
-                </VStack>
-                {msg.priority >= 8 && <Badge variant="error" label={t.priority(msg.priority)} className="no-shrink" />}
-                <MoreMenu size="sm" label={t.messageActions} alignment="end" items={items} onOpenChange={captureSelection} />
-              </HStack>
-              {msg.body &&
-                (msg.markdown ? (
-                  // Images in the body open in the viewer too.
-                  <div
-                    className="selectable"
-                    onClick={(e) => {
-                      if (e.target instanceof HTMLImageElement) setViewing(e.target.currentSrc || e.target.src);
-                    }}>
-                    <Markdown
-                      density="compact"
-                      contentWidth="100%"
-                      headingLevelStart={4}
-                      onLinkClick={(href) => {
-                        openLink(href);
-                        return false;
-                      }}>
-                      {msg.body}
-                    </Markdown>
-                  </div>
-                ) : (
-                  <PlainBody text={msg.body} />
-                ))}
-              {msg.imageSrc && !(msg.markdown && msg.body.includes(msg.imageUrl)) && <MessageImage src={msg.imageSrc} onView={setViewing} />}
-              {msg.clickUrl && (
-                <HStack>
-                  <Button label={t.openLink} size="sm" icon={<ExternalLinkIcon size={14} />} tooltip={msg.clickUrl} onClick={() => openLink(msg.clickUrl)} />
-                </HStack>
-              )}
-            </VStack>
-          </HStack>
-        </Card>
-      </ContextMenu>
+      {msg.body &&
+        (msg.markdown ? (
+          <div
+            className="selectable"
+            onClick={(e) => {
+              if (e.target instanceof HTMLImageElement) setViewing(e.target.currentSrc || e.target.src);
+            }}>
+            <Markdown
+              density="compact"
+              contentWidth="100%"
+              headingLevelStart={4}
+              onLinkClick={(href) => {
+                openMessageLink(href);
+                return false;
+              }}>
+              {msg.body}
+            </Markdown>
+          </div>
+        ) : (
+          <PlainBody text={msg.body} />
+        ))}
+      {msg.imageSrc && !(msg.markdown && msg.body.includes(msg.imageUrl)) && <MessageImage src={msg.imageSrc} onView={setViewing} />}
       {viewing && (
-        <Lightbox
-          isOpen
-          onOpenChange={(open) => !open && setViewing(null)}
-          media={{ src: viewing, alt: title, caption: title }}
-          hasZoom
-        />
+        <Lightbox isOpen onOpenChange={(open) => !open && setViewing(null)} media={{ src: viewing, alt: title, caption: title }} hasZoom />
       )}
     </>
   );
-});
+}
+
+/** The row and the reading pane share one menu. The snapshot is taken inside `root` only. */
+export function useMessageMenu(msg: Message, root: { readonly current: HTMLElement | null }, deleting: boolean, onDelete: (msg: Message) => void) {
+  const t = useT();
+  const [selectedText, setSelectedText] = useState("");
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) return;
+      // Snapshot before the menu takes focus; never copy a different message's selection.
+      const selection = window.getSelection();
+      const el = root.current;
+      setSelectedText(
+        selection && !selection.isCollapsed && el?.contains(selection.anchorNode) && el?.contains(selection.focusNode) ? selection.toString() : "",
+      );
+    },
+    [root],
+  );
+  const items = [
+    ...(selectedText ? [{ label: t.copySelectedText, onClick: () => void Desktop.copyText(selectedText) }] : []),
+    { label: t.copyText, onClick: () => void Desktop.copyText(msg.body) },
+    ...(msg.clickUrl ? [{ label: t.openLink, onClick: () => openMessageLink(msg.clickUrl) }] : []),
+    ...(msg.imageUrl ? [{ label: t.openImageInBrowser, onClick: () => openMessageLink(msg.imageUrl) }] : []),
+    { type: "divider" as const },
+    { label: t.delete, variant: "destructive" as const, isDisabled: deleting, onClick: () => onDelete(msg) },
+  ];
+  return { items, onOpenChange };
+}
+
+export function MessageMenu({
+  msg,
+  deleting,
+  onDelete,
+  children,
+}: {
+  msg: Message;
+  deleting: boolean;
+  onDelete(msg: Message): void;
+  children: ReactNode;
+}) {
+  const t = useT();
+  const root = useRef<HTMLDivElement>(null);
+  const { items, onOpenChange } = useMessageMenu(msg, root, deleting, onDelete);
+  return (
+    <ContextMenu ref={root} items={items} label={t.messageActions} onOpenChange={onOpenChange}>
+      {children}
+    </ContextMenu>
+  );
+}

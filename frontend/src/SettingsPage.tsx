@@ -1,5 +1,6 @@
 import { Button } from "@astryxdesign/core/Button";
 import { Heading } from "@astryxdesign/core/Heading";
+import { Link } from "@astryxdesign/core/Link";
 import { MobileNavToggle } from "@astryxdesign/core/MobileNav";
 import { HStack, Layout, LayoutContent, LayoutHeader, VStack } from "@astryxdesign/core/Layout";
 import { Divider } from "@astryxdesign/core/Divider";
@@ -8,10 +9,12 @@ import { Selector } from "@astryxdesign/core/Selector";
 import { Switch } from "@astryxdesign/core/Switch";
 import { Text } from "@astryxdesign/core/Text";
 import { TimeInput, type ISOTimeString } from "@astryxdesign/core/TimeInput";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLang, useT } from "./i18n";
 import { Desktop, type Language, type State, type Theme } from "./mygo";
 import { errorText, refreshState, useNow, useSettings } from "./store";
+
+const repositoryURL = "https://github.com/RedwindA/gotify-desktop";
 
 const toTime = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}` as ISOTimeString;
 
@@ -31,7 +34,9 @@ function tomorrowMorning(): Date {
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <VStack gap={2}>
-      <Heading level={2}>{title}</Heading>
+      <Heading level={2} className="settings-group-title">
+        {title}
+      </Heading>
       <Section padding={4} className="settings-group">
         <VStack gap={4}>{children}</VStack>
       </Section>
@@ -39,29 +44,38 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function SettingsPage({ state, onError, onInfo }: { state: State; onError(msg: string): void; onInfo(msg: string): void }) {
+export function SettingsPage({ state, onError }: { state: State; onError(msg: string): void }) {
   const t = useT();
   const lang = useLang();
   const [s, update] = useSettings(state.settings, (e) => onError(t.couldNotSaveSettings(e)));
   const pausedFormat = new Intl.DateTimeFormat(lang, { weekday: "short", hour: "2-digit", minute: "2-digit" });
   const now = useNow(30_000);
   const paused = s.pausedUntil !== null && Date.parse(s.pausedUntil) > now;
+  const [testNote, setTestNote] = useState("");
+  const testTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(testTimer.current), []);
+  const showTestNote = () => {
+    setTestNote(t.testSent);
+    window.clearTimeout(testTimer.current);
+    testTimer.current = window.setTimeout(() => setTestNote(""), 3000);
+  };
 
   return (
     <Layout
-      contentWidth={680}
       padding={5}
       header={
-        <LayoutHeader hasDivider className="titlebar">
-          <HStack gap={3} vAlign="center">
-            <MobileNavToggle label={t.openSidebar} />
-            <Heading level={1}>{t.settings}</Heading>
+        <LayoutHeader padding={0} hasDivider className="titlebar">
+          <HStack gap={3} vAlign="center" className="toolbar-row">
+            <MobileNavToggle label={t.openSidebar} className="no-shrink" />
+            <Heading level={1} className="toolbar-title">
+              {t.settings}
+            </Heading>
           </HStack>
         </LayoutHeader>
       }
       content={
         <LayoutContent>
-          <VStack gap={6}>
+          <VStack gap={6} className="settings-column">
             <Group title={t.general}>
               <Selector
                 label={t.language}
@@ -175,25 +189,47 @@ export function SettingsPage({ state, onError, onInfo }: { state: State; onError
                   clickAction={async () => {
                     try {
                       await Desktop.testNotification();
-                      onInfo(t.testSent);
+                      showTestNote();
                     } catch (err) {
                       onError(t.notificationsUnavailable(errorText(err)));
                     }
                   }}
                 />
+                {testNote && (
+                  <Text type="supporting" aria-live="polite">
+                    {testNote}
+                  </Text>
+                )}
               </HStack>
             </Group>
 
             <Group title={t.about}>
-              <VStack gap={1}>
-                <Text weight="medium">Gotify Desktop {state.version}</Text>
-                <Text type="supporting">
-                  {t.servers(state.servers.length)} · {t.dataIn}{" "}
-                  <Text type="code" size="sm" className="selectable">
-                    {state.dataDir}
+              <HStack gap={3} vAlign="center">
+                <VStack gap={1} className="grow">
+                  <Text weight="medium">Gotify Desktop {state.version}</Text>
+                  <Text type="supporting">
+                    {t.servers(state.servers.length)} · {t.dataIn}{" "}
+                    <Text type="code" size="sm" className="selectable">
+                      {state.dataDir}
+                    </Text>
                   </Text>
+                </VStack>
+                <Button label={t.checkForUpdates} onClick={() => void Desktop.checkForUpdates().catch((err) => onError(errorText(err)))} />
+              </HStack>
+              <Divider />
+              <HStack gap={3} vAlign="center">
+                <Text weight="medium" className="grow">
+                  {t.sourceCode}
                 </Text>
-              </VStack>
+                <Link
+                  href={repositoryURL}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void Desktop.openURL(repositoryURL).catch((err) => onError(errorText(err)));
+                  }}>
+                  {repositoryURL.replace(/^https:\/\//, "")}
+                </Link>
+              </HStack>
             </Group>
           </VStack>
         </LayoutContent>

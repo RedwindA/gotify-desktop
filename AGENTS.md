@@ -17,6 +17,7 @@ a React frontend in `frontend/` built with the Astryx design system (`@astryxdes
 - `internal/secret`: client tokens in `tokens.json` (mode 0600) in the data dir, not the OS keyring: unsigned macOS builds would be asked for keychain access after every update (`Tokens` interface, `Memory` for tests).
 - `internal/conn`: per-server supervisor (dial, REST catch-up, ping/pong liveness, backoff, auth failure).
 - `internal/notify`: native notifications (Windows toasts, macOS UNUserNotificationCenter, Linux D-Bus), policy and dispatcher.
+- `internal/appearance`: the system's accent color (`#rrggbb`), read per OS and cached briefly.
 - `internal/app`: the controller (servers, supervisors, store, notifications) with no UI.
 - `internal/api`: the service the page calls (`mygo.Bind`) and its events; `Demo` and `FakeBackend` back its tests and the preview.
 - `frontend/`: the page (Vite, React, Astryx); `src/mygo.ts` is generated from `internal/api` by `mygo generate`. Message bodies render with Astryx `Markdown`.

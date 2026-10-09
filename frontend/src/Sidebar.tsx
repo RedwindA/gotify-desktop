@@ -4,8 +4,7 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { Icon } from "@astryxdesign/core/Icon";
 import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import { MobileNav } from "@astryxdesign/core/MobileNav";
-import { NavIcon } from "@astryxdesign/core/NavIcon";
-import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
+import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { BellIcon, BellOffIcon, InboxIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import type { App, Server, State } from "./mygo";
@@ -54,6 +53,18 @@ export function AppAvatar({ serverId, app, size }: { serverId: number; app: App 
   return <Avatar size={size} shape="rounded" name={app?.name || "?"} src={src} tooltip={false} />;
 }
 
+function SidebarTop() {
+  const t = useT();
+  return (
+    <div className="sidenav-top drag">
+      <span className="sidenav-brand">
+        <BellIcon size={16} aria-hidden="true" />
+        <span>{t.appName}</span>
+      </span>
+    </div>
+  );
+}
+
 export function Sidebar({
   state,
   route,
@@ -61,7 +72,7 @@ export function Sidebar({
   onAdd,
   drawer = false,
 }: {
-  state: State;
+  state: State | null;
   route: Route;
   actions: ServerActions;
   onAdd(): void;
@@ -70,17 +81,22 @@ export function Sidebar({
   const t = useT();
   // In a narrow window the sidebar is a drawer, which closes once a page is picked.
   const { closeMobileNav } = useAppShellMobile();
+  const header = <SidebarTop />;
+  if (!state) {
+    if (drawer)
+      return (
+        <MobileNav side="start" header={header}>
+          {null}
+        </MobileNav>
+      );
+    return <SideNav header={header}>{null}</SideNav>;
+  }
   const go = (r: Route) => {
     goTo(r);
     closeMobileNav();
   };
   const isSel = (serverId: number, appId: number) =>
     route.page === "messages" && route.serverId === serverId && route.appId === appId;
-  const header = (
-    <div className="sidenav-top drag">
-      <SideNavHeading heading="Gotify" subheading="Desktop" icon={<NavIcon icon={<Icon icon={BellIcon} size="sm" />} />} />
-    </div>
-  );
   const footer = (
     <SideNavSection title={t.appName} isHeaderHidden>
       <SideNavItem

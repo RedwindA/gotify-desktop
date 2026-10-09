@@ -1,7 +1,7 @@
 // The app state from Go, kept up to date by its events, and the page's route.
 import { isCallError } from "mygo-runtime";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Desktop, events, type Navigation, type Server, type Settings, type State } from "./mygo";
+import { Desktop, events, type Command, type Navigation, type Server, type Settings, type State } from "./mygo";
 
 let state: State | null = null;
 const listeners = new Set<() => void>();
@@ -115,13 +115,42 @@ export function clearNavTarget() {
   for (const l of navListeners) l();
 }
 
+// A menu command (settings, add server) is taken once, the same way a
+// notification's navigation is. It waits here if the page has not subscribed yet.
+let pendingCommand: Command | null = null;
+const commandListeners = new Set<(command: Command) => void>();
+
+function dispatchCommand(command: Command | null) {
+  if (!command) return;
+  if (commandListeners.size === 0) {
+    pendingCommand = command;
+    return;
+  }
+  for (const listener of commandListeners) listener(command);
+}
+
+/** Hears menu commands. The listener is called with one that arrived before it subscribed. */
+export function subscribeCommand(listener: (command: Command) => void) {
+  commandListeners.add(listener);
+  if (pendingCommand) {
+    const command = pendingCommand;
+    pendingCommand = null;
+    listener(command);
+  }
+  return () => {
+    commandListeners.delete(listener);
+  };
+}
+
 /** Loads the state and listens to Go. Subscribing before the first render catches early events. */
 export async function start() {
   events.state.on(setState);
   events.navigate.on(() => void Desktop.takeNavigation().then(navigate));
-  const [s, n] = await Promise.all([Desktop.state(), Desktop.takeNavigation()]);
+  events.command.on(() => void Desktop.takeCommand().then(dispatchCommand));
+  const [s, n, c] = await Promise.all([Desktop.state(), Desktop.takeNavigation(), Desktop.takeCommand()]);
   setState(s);
   navigate(n);
+  dispatchCommand(c);
 }
 
 /** The text of an error from Go, or of any other error. */

@@ -11,6 +11,14 @@ import { Desktop, type Server } from "./mygo";
 import { useT, type Messages } from "./i18n";
 import { errorText } from "./store";
 
+/** WebView2 ignores autocomplete=off on a password and still offers saved ones. */
+function plainField(el: HTMLInputElement | null) {
+  if (!el) return;
+  el.spellcheck = false;
+  el.autocapitalize = "off";
+  el.setAttribute("autocorrect", "off");
+}
+
 export type ServerDialogMode = { kind: "add" } | { kind: "edit"; server: Server } | { kind: "relogin"; server: Server };
 
 const titles = (t: Messages): Record<ServerDialogMode["kind"], [title: string, subtitle: string, action: string]> => ({
@@ -89,10 +97,12 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
               {error && <Banner status="error" title={error} />}
               {mode.kind !== "relogin" && (
                 <TextInput
+                  ref={plainField}
                   label={t.serverAddress}
                   value={url}
                   onChange={setUrl}
                   placeholder="https://gotify.example.com"
+                  autoComplete="off"
                   isReadOnly={mode.kind === "edit"}
                   hasAutoFocus={mode.kind === "add"}
                   onEnter={submit}
@@ -100,14 +110,24 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
                 />
               )}
               {mode.kind !== "relogin" && (
-                <TextInput label={t.name} isOptional value={name} onChange={setName} placeholder={t.namePlaceholder} onEnter={submit} />
+                <TextInput
+                  ref={plainField}
+                  label={t.name}
+                  isOptional
+                  value={name}
+                  onChange={setName}
+                  placeholder={t.namePlaceholder}
+                  autoComplete="off"
+                  onEnter={submit}
+                />
               )}
               {needsLogin && (
                 <TextInput
+                  ref={plainField}
                   label={t.username}
                   value={user}
                   onChange={setUser}
-                  autoComplete="username"
+                  autoComplete="off"
                   hasAutoFocus={mode.kind === "relogin"}
                   onEnter={submit}
                   status={userError ? { type: "error", message: userError } : undefined}
@@ -115,11 +135,12 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
               )}
               {needsLogin && (
                 <TextInput
+                  ref={plainField}
                   label={t.password}
                   type="password"
                   value={pass}
                   onChange={setPass}
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   onEnter={submit}
                   status={passError ? { type: "error", message: passError } : undefined}
                 />

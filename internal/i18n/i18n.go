@@ -76,6 +76,20 @@ var chinese = map[string]string{
 	" (a server is offline)":              "（有服务器离线）",
 	", notifications paused":              "，通知已暂停",
 
+	// Menus (macOS).
+	"About Gotify Desktop": "关于 Gotify Desktop",
+	"Settings…":            "设置…",
+	"Add Server…":          "添加服务器…",
+	"Services":             "服务",
+	"Hide Gotify Desktop":  "隐藏 Gotify Desktop",
+	"Hide Others":          "隐藏其他",
+	"Show All":             "全部显示",
+	"Quit Gotify Desktop":  "退出 Gotify Desktop",
+	"Close Window":         "关闭窗口",
+	"File":                 "文件",
+	"Edit":                 "编辑",
+	"Window":               "窗口",
+
 	// Dialogs.
 	"Choose a CA certificate": "选择 CA 证书",
 	"Certificates":            "证书",
@@ -106,5 +120,6 @@ var chinese = map[string]string{
 	"This file is not a PEM certificate.":                                                       "此文件不是 PEM 证书。",
 	"Choosing files is not available.":                                                          "无法选择文件。",
 	"Starting at login is not available.":                                                       "无法设置开机启动。",
+	"Checking for updates is not available.":                                                    "无法检查更新。",
 	"Can't open %q.":                                                                            "无法打开 %q。",
 }

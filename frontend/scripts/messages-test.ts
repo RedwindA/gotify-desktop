@@ -22,7 +22,7 @@ try {
     preview.once("exit", () => reject(new Error("preview exited before listening")));
   });
   browser = await chromium.launch({ executablePath: process.env.CHROME ?? (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : "/usr/bin/google-chrome") });
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } });
+  const page = await browser.newPage({ viewport: { width: 1400, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   let navigateToOld = false;
@@ -39,8 +39,11 @@ try {
       const matching = messages.filter((m) => (!q.before || m.id < q.before.id) && (!q.include || m.id <= q.include.id) && (!q.search || m.title.includes(q.search)));
       const rows = matching.slice(0, q.limit);
       const last = rows.at(-1);
+      // The page shows "older messages" only when the server says newer ones exist.
+      const hasNewer = !!q.include && messages.some((m) => m.id > q.include.id);
       await route.fulfill({ json: { result: { messages: rows, hasMore: matching.length > rows.length,
-        next: matching.length > rows.length && last ? { date: last.date, id: last.id, serverId: last.serverId } : null, msgGen: 1 } } });
+        next: matching.length > rows.length && last ? { date: last.date, id: last.id, serverId: last.serverId } : null,
+        hasNewer, msgGen: 1 } } });
     } else if (method === "Desktop.TakeNavigation" && navigateToOld) {
       navigateToOld = false;
       await route.fulfill({ json: { result: { serverId: 1, appId: 1, messageId: 150 } } });
@@ -48,16 +51,16 @@ try {
       await route.fulfill({ status: 500, json: { error: "Read operation failed: disk full" } });
     } else await route.continue();
   });
+  const fixture = (id: number) => page.getByText(`Fixture ${id}`, { exact: true }).first();
   await page.goto(`${url}/#/`);
-  await page.getByText("Fixture 350", { exact: true }).waitFor();
+  await fixture(350).waitFor();
   assert.equal(queries[0]?.limit, 100);
   for (let pageNumber = 1; pageNumber <= 3; pageNumber++) {
     const before = queries.length;
     await page.locator("[data-key]").first().evaluate((el) => {
-      let parent: HTMLElement | null = el.parentElement;
-      while (parent && parent.scrollHeight <= parent.clientHeight + 1) parent = parent.parentElement;
-      if (!parent) throw new Error("No scrolling container");
-      parent.scrollTop = parent.scrollHeight;
+      const pane = el.closest(".msg-list-scroll");
+      if (!(pane instanceof HTMLElement)) throw new Error("No list scroller");
+      pane.scrollTop = pane.scrollHeight;
     });
     await page.waitForFunction((previous) => document.querySelectorAll("[data-key]").length > 0 && document.querySelector(`[data-key="1/${previous}"]`) !== null, 350 - pageNumber * 100 + 1);
     // Loading starts close to the end; let the request complete before scrolling again.
@@ -70,9 +73,9 @@ try {
   await page.getByText("Read operation failed: disk full", { exact: false }).first().waitFor();
   navigateToOld = true;
   await page.reload();
-  await page.getByText("Fixture 150", { exact: true }).waitFor();
+  await fixture(150).waitFor();
   await page.getByRole("button", { name: "Show latest messages" }).click();
-  await page.getByText("Fixture 350", { exact: true }).waitFor();
+  await fixture(350).waitFor();
   assert.deepEqual(errors, []);
   console.log("PASS: cursor pagination, historical navigation, return to latest, and visible read failure");
 } finally {

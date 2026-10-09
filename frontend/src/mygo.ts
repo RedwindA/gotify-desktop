@@ -23,10 +23,33 @@ export interface AppPrefs {
   minPriority: number | null;
 }
 
+/** Appearance is what the page takes from the system. */
+export interface Appearance {
+  /** Accent is the system's accent color as #rrggbb, or "" when unknown. */
+  accent: string;
+  material: Material;
+}
+
 /** CAFile is a CA certificate the user chose. */
 export interface CAFile {
   name: string;
   pem: string;
+}
+
+/** Command is a command of the app's menu that the page carries out. */
+export type Command = "settings" | "addServer";
+
+/** ConfirmAnswer is the answer to a Confirmation. */
+export type ConfirmAnswer = "yes" | "no" | "unavailable";
+
+/** Confirmation is a question for Confirm. */
+export interface Confirmation {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel: string;
+  /** Destructive marks the confirming button as one that deletes data. */
+  destructive: boolean;
 }
 
 /** ConnState is the state of a server's connection. */
@@ -34,6 +57,9 @@ export type ConnState = "connected" | "connecting" | "backoff" | "authFailed" | 
 
 /** Language is a language the app can show, or "" for the system's. */
 export type Language = "" | "en" | "zh-CN";
+
+/** Material is what the window shows behind the transparent parts of the page. */
+export type Material = "" | "mica" | "sidebar";
 
 /** Message is a received message. */
 export interface Message {
@@ -177,6 +203,17 @@ export const Desktop = {
   appImage(serverID: number, appID: number): Promise<string> {
     return call("Desktop.AppImage", serverID, appID);
   },
+  /** CheckForUpdates checks for a newer version in the update window. */
+  checkForUpdates(): Promise<void> {
+    return call("Desktop.CheckForUpdates");
+  },
+  /**
+   * Confirm asks a question in a native message box. It answers "unavailable"
+   * when there is none, for the page to ask in its own dialog.
+   */
+  confirm(c: Confirmation): Promise<ConfirmAnswer> {
+    return call("Desktop.Confirm", c);
+  },
   /** CopyText puts text on the clipboard. */
   copyText(text: string): Promise<void> {
     return call("Desktop.CopyText", text);
@@ -244,6 +281,14 @@ export const Desktop = {
   state(): Promise<State> {
     return call("Desktop.State");
   },
+  /** SystemAppearance returns the system's accent color and the window's material. */
+  systemAppearance(): Promise<Appearance> {
+    return call("Desktop.SystemAppearance");
+  },
+  /** TakeCommand returns the command the app's menu asked for, once, or null. */
+  takeCommand(): Promise<Command | null> {
+    return call("Desktop.TakeCommand");
+  },
   /** TakeNavigation returns the navigation a clicked notification asked for, once, or null. */
   takeNavigation(): Promise<Navigation | null> {
     return call("Desktop.TakeNavigation");
@@ -266,4 +311,6 @@ export const events = {
   state: event<State>("state"),
   /** NavigateRequested asks the page to show a message, after a notification was clicked. */
   navigate: event<Navigation>("navigate"),
+  /** CommandRequested asks the page to run a command of the app's menu. */
+  command: event<Command>("command"),
 } as const;

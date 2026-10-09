@@ -2,6 +2,15 @@
 
 :root {
   color-scheme: light dark;
+  --toolbar-height: max(var(--mygo-titlebar-height, 0px), 48px);
+}
+
+/* The theme sets these on the theme element, inside a layer. An unlayered rule on that element wins in light and dark. */
+:root,
+[data-astryx-theme="neutral"] {
+  --font-family-body: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans", sans-serif;
+  --font-family-heading: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans", sans-serif;
+  --font-family-code: "Cascadia Mono", Consolas, ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
 }
 
 html,
@@ -10,9 +19,156 @@ body,
   height: 100%;
 }
 
+html,
+body {
+  overscroll-behavior: none;
+  overflow: hidden;
+}
+
 body {
   background: var(--color-background-body);
   font-family: var(--font-family-body);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable=""],
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+button,
+[role="button"],
+[role="menuitem"],
+[role="menuitemradio"],
+[role="option"],
+[role="tab"],
+[role="switch"],
+[role="checkbox"],
+label,
+summary,
+select {
+  cursor: default;
+}
+
+a[href] {
+  cursor: pointer;
+}
+
+img,
+a {
+  -webkit-user-drag: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+.toolbar-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+}
+
+.toolbar-subtitle {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.3;
+}
+
+.toolbar-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--toolbar-height);
+  padding-inline: var(--spacing-5, 20px);
+}
+
+.settings-column {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 760px;
+}
+
+.settings-group-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.4;
+}
+
+.sidenav-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2, 8px);
+  min-width: 0;
+  padding-inline: var(--spacing-4, 16px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.2;
+}
+
+.sidenav-brand svg {
+  flex: none;
+}
+
+.sidenav-brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-platform="darwin"] .sidenav-brand {
+  display: none;
+}
+
+/* SideNav's sticky header pads around the strip; the strip itself is the title-bar row. */
+.astryx-side-nav :has(> .sidenav-top) {
+  padding: 0;
+  gap: 0;
+}
+
+.astryx-mobile-nav .sidenav-top {
+  height: auto;
+  border-bottom: 0;
+  flex: 1 1 auto;
+}
+
+/* Astryx's styles are all in cascade layers, so these unlayered rules win without !important. */
+html[data-material] body,
+html[data-material] .astryx-app-shell,
+html[data-material] .astryx-app-shell-sidenav {
+  background: transparent;
+}
+
+html[data-material] .astryx-app-shell [role="main"] {
+  background-color: var(--color-background-surface);
+}
+
+html[data-material="mica"] .astryx-app-shell [role="main"] {
+  border-top: 1px solid color-mix(in srgb, var(--color-text-secondary) 15%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--color-text-secondary) 15%, transparent);
+  border-top-left-radius: 8px;
+}
+
+html[data-material="sidebar"] .astryx-app-shell [role="main"] {
+  border-radius: 0;
+  border-top: 0;
+  border-left: 1px solid color-mix(in srgb, var(--color-text-secondary) 15%, transparent);
 }
 
 /* Stack children that should take the room left in their row. */
@@ -27,12 +183,13 @@ body {
   flex-shrink: 0;
 }
 
-.msg-card {
-  transition: box-shadow 0.3s ease, opacity 0.2s ease;
+.msg-option,
+.msg-view {
+  transition: background-color 0.12s ease, opacity 0.2s ease, box-shadow 0.3s ease;
 }
 
 .msg-highlight {
-  box-shadow: 0 0 0 2px var(--color-accent);
+  box-shadow: inset 0 0 0 2px var(--color-accent);
 }
 
 .msg-deleting {
@@ -48,8 +205,8 @@ body {
   color: var(--color-accent);
 }
 
-/* Message images never overflow their card. */
-.msg-card img {
+/* Message images never overflow the reading pane. */
+.msg-view img {
   max-width: 100%;
   height: auto;
 }
@@ -101,15 +258,22 @@ body {
 }
 
 .titlebar {
-  min-height: var(--mygo-titlebar-height, 0px);
+  box-sizing: border-box;
+  height: var(--toolbar-height);
   padding-right: var(--mygo-titlebar-inset-right, 0px);
+  overflow: hidden;
 }
 
-/* Controls on the left (the traffic lights of macOS, or a GTK layout that puts
-   them there) sit over the sidebar: its content starts below them. The
-   multiplication turns any room on the left into the full title bar height. */
+/* The strip is the title bar. On macOS it stays empty for the traffic lights;
+   a left inset shifts the caption clear of controls that sit on that side. */
 .sidenav-top {
-  padding-top: min(var(--mygo-titlebar-height, 0px), calc(var(--mygo-titlebar-inset-left, 0px) * 100));
+  box-sizing: border-box;
+  height: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-inline-start: var(--mygo-titlebar-inset-left, 0px);
+  border-bottom: 1px solid var(--color-border);
 }
 
 /* The image of a message (bigImageUrl), at its own proportions, no wider than
@@ -126,7 +290,7 @@ body {
   cursor: zoom-in;
 }
 
-.msg-card .astryx-markdown img {
+.msg-view .astryx-markdown img {
   cursor: zoom-in;
 }
 
@@ -154,7 +318,7 @@ body {
 
 .corner-toggle {
   position: absolute;
-  top: max(var(--spacing-3, 12px), calc((var(--mygo-titlebar-height, 0px) - 32px) / 2));
+  top: calc((var(--toolbar-height) - 32px) / 2);
   left: calc(var(--mygo-titlebar-inset-left, 0px) + var(--spacing-3, 12px));
 }
 
@@ -162,8 +326,7 @@ body {
   position: relative;
 }
 
-/* The message list renders the cards near the screen only (MessagesPage),
-   each placed at its offset in a box as tall as all of them. */
+/* The list renders the rows near the screen only, each placed at its offset. */
 .msg-list {
   position: relative;
   width: 100%;
@@ -174,4 +337,240 @@ body {
   top: 0;
   left: 0;
   width: 100%;
+  box-sizing: border-box;
+  padding: 1px 4px;
+}
+
+/* Mail layout: toolbar, independent list, independent reading pane. */
+.msg-page {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-background-surface);
+}
+
+.msg-page h1.toolbar-title {
+  margin: 0;
+}
+
+.msg-toolbar {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--toolbar-height);
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.msg-toolbar-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.msg-search {
+  flex: 0 1 220px;
+  width: 220px;
+  min-width: 128px;
+}
+
+.msg-toolbar button,
+.msg-toolbar input,
+.msg-toolbar a,
+.msg-view-bar button {
+  --app-region: no-drag;
+}
+
+.msg-body {
+  height: 100%;
+  min-height: 0;
+}
+
+.msg-split {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.msg-list-pane,
+.msg-read-pane {
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-background-surface);
+}
+
+.msg-list-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.msg-split.is-wide .msg-list-pane {
+  flex: 0 0 clamp(300px, 36%, 420px);
+  width: clamp(300px, 36%, 420px);
+  border-inline-end: 1px solid var(--color-border);
+}
+
+.msg-split:not(.is-wide) .msg-list-pane,
+.msg-split:not(.is-wide) .msg-read-pane {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.msg-read-pane {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.msg-banners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+  padding: 8px 8px 0;
+}
+
+.msg-list-scroll,
+.msg-read-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.msg-list-scroll.is-empty {
+  display: flex;
+  flex-direction: column;
+}
+
+.msg-list-empty,
+.msg-read-empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.msg-row > div {
+  width: 100%;
+  min-width: 0;
+}
+
+/* The menu is portaled inside the row. Keep it the width of its items; a
+   stretched popover makes every action look like a full-width bar. */
+.astryx-context-menu {
+  width: max-content;
+  max-width: min(320px, 80vw);
+}
+
+.msg-option {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  border-radius: 6px;
+  outline: none;
+}
+
+.msg-option:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
+}
+
+/* Mixed from the accent itself: the neutral theme's --color-accent-muted is the
+   surface color in dark mode. */
+.msg-option[aria-selected="true"],
+.msg-option[aria-selected="true"]:hover {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.msg-option:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.msg-unread {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  height: 8px;
+}
+
+.msg-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.msg-view-fill {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* The context-menu trigger is the bar's next sibling. A broader `> div` rule
+   also matches its closed popover and forces that popover visible. */
+.msg-view-bar + div {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.msg-view-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-background-surface);
+}
+
+.msg-view-body {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 768px;
+  padding: 24px;
+}
+
+.msg-view-title {
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.msg-skeletons {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.msg-skel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 1px 4px;
+  padding: 8px 10px;
+}
+
+.msg-skel-lines {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

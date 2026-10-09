@@ -34,6 +34,8 @@ const en = {
   unreadCount: (n: number) => `${n} unread`,
   search: "Search",
   searchMessages: "Search messages",
+  back: "Back",
+  selectMessage: "Select a message to read it",
   noMatchTitle: (q: string) => `No messages match “${q}”`,
   noMatchText: "Try other words, or search all messages.",
   noMessagesTitle: "No messages yet",
@@ -129,6 +131,8 @@ const en = {
   couldNotSaveSettings: (e: string) => `Couldn't save settings: ${e}`,
   about: "About",
   dataIn: "data in",
+  checkForUpdates: "Check for updates…",
+  sourceCode: "Source code",
 };
 
 export type Messages = typeof en;
@@ -164,6 +168,8 @@ const zh: Messages = {
   unreadCount: (n) => `${n} 条未读`,
   search: "搜索",
   searchMessages: "搜索消息",
+  back: "返回",
+  selectMessage: "选择一条消息以查看",
   noMatchTitle: (q) => `没有匹配“${q}”的消息`,
   noMatchText: "换个关键词试试，或在全部消息中搜索。",
   noMessagesTitle: "还没有消息",
@@ -259,6 +265,8 @@ const zh: Messages = {
   couldNotSaveSettings: (e) => `无法保存设置：${e}`,
   about: "关于",
   dataIn: "数据位于",
+  checkForUpdates: "检查更新…",
+  sourceCode: "源代码",
 };
 
 export type Lang = "en" | "zh-CN";

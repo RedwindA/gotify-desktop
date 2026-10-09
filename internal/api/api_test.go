@@ -329,6 +329,71 @@ func TestChangedCoalescesAndWaitsForStart(t *testing.T) {
 	}
 }
 
+func TestConfirm(t *testing.T) {
+	_, d := start(t, NewFakeBackend(), Platform{})
+	if ans, err := d.Confirm(context.Background(), Confirmation{Title: "T"}); ans != ConfirmUnavailable || err != nil {
+		t.Fatalf("nil confirm: %q %v", ans, err)
+	}
+	_, d = start(t, NewFakeBackend(), Platform{Confirm: func(context.Context, Confirmation) (bool, error) { return true, nil }})
+	if ans, err := d.Confirm(context.Background(), Confirmation{}); ans != ConfirmYes || err != nil {
+		t.Fatalf("yes: %q %v", ans, err)
+	}
+	_, d = start(t, NewFakeBackend(), Platform{Confirm: func(context.Context, Confirmation) (bool, error) { return false, nil }})
+	if ans, err := d.Confirm(context.Background(), Confirmation{}); ans != ConfirmNo || err != nil {
+		t.Fatalf("no: %q %v", ans, err)
+	}
+	boom := errors.New("boom")
+	_, d = start(t, NewFakeBackend(), Platform{Confirm: func(context.Context, Confirmation) (bool, error) { return true, boom }})
+	ans, err := d.Confirm(context.Background(), Confirmation{})
+	if !errors.Is(err, boom) || ans != "" {
+		t.Fatalf("error: %q %v", ans, err)
+	}
+}
+
+func TestSystemAppearanceZeroWithoutPlatform(t *testing.T) {
+	_, d := start(t, NewFakeBackend(), Platform{})
+	if got := d.SystemAppearance(); got != (Appearance{}) {
+		t.Fatalf("zero: %+v", got)
+	}
+	want := Appearance{Accent: "#112233", Material: MaterialMica}
+	_, d = start(t, NewFakeBackend(), Platform{Appearance: func() Appearance { return want }})
+	if got := d.SystemAppearance(); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestCheckForUpdates(t *testing.T) {
+	_, d := start(t, NewFakeBackend(), Platform{})
+	if err := d.CheckForUpdates(); err == nil {
+		t.Fatal("no updater: want an error")
+	}
+	checked := 0
+	_, d = start(t, NewFakeBackend(), Platform{CheckForUpdates: func() { checked++ }})
+	if err := d.CheckForUpdates(); err != nil || checked != 1 {
+		t.Fatalf("check: %v, %d calls", err, checked)
+	}
+}
+
+func TestCommandIsTakenOnce(t *testing.T) {
+	c, d := start(t, NewFakeBackend(), Platform{})
+	c.Command(CommandSettings)
+	if cmd := d.TakeCommand(); cmd == nil || *cmd != CommandSettings {
+		t.Fatalf("take: %v", cmd)
+	}
+	if cmd := d.TakeCommand(); cmd != nil {
+		t.Fatalf("taken twice: %v", cmd)
+	}
+}
+
+func TestCommandAfterCloseIsNotPending(t *testing.T) {
+	c, d := start(t, NewFakeBackend(), Platform{})
+	c.Close()
+	c.Command(CommandAddServer)
+	if cmd := d.TakeCommand(); cmd != nil {
+		t.Fatalf("pending after close: %v", cmd)
+	}
+}
+
 func TestNavigateIsTakenOnce(t *testing.T) {
 	c, d := start(t, NewFakeBackend(), Platform{})
 	var got []Navigation
