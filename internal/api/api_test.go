@@ -143,8 +143,12 @@ func TestMessagesPagesAndGrowToInclude(t *testing.T) {
 		t.Fatalf("page: %d, more %v", len(p.Messages), p.HasMore)
 	}
 	p, _ = d.Messages(Query{Limit: 100, Include: &MessageRef{ServerID: 1, ID: 120}})
-	if len(p.Messages) != 100 || !p.HasMore || p.Messages[0].ID != 120 {
-		t.Fatalf("the bounded page should start at message 120: %d, more %v", len(p.Messages), p.HasMore)
+	if len(p.Messages) != 100 || !p.HasMore || !p.HasNewer || p.Messages[0].ID != 120 {
+		t.Fatalf("the bounded page should start at message 120: %d, more %v, newer %v", len(p.Messages), p.HasMore, p.HasNewer)
+	}
+	p, _ = d.Messages(Query{Limit: 100, Include: &MessageRef{ServerID: 1, ID: 250}})
+	if len(p.Messages) != 100 || p.HasNewer || p.Messages[0].ID != 250 {
+		t.Fatalf("the newest message is not an older page: %d, newer %v", len(p.Messages), p.HasNewer)
 	}
 	p, _ = d.Messages(Query{Limit: 100, Include: &MessageRef{ServerID: 2, ID: 30}})
 	if len(p.Messages) != 100 {

@@ -225,6 +225,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       // refresh the loaded window using bounded cursor queries.
       const reuse = !target && previous?.scope === scope && previous.gen === state.msgGen;
       let result = reuse ? previous.page : await Desktop.messages({ serverId, appId, search: target ? "" : query, limit: pageSize, include: anchor, before: null });
+      const hasNewer = result.hasNewer;
       const all = [...result.messages];
       while (live && result.hasMore && result.next && all.length < limit) {
         result = await Desktop.messages({ serverId, appId, search: target ? "" : query, limit: pageSize, include: null, before: result.next });
@@ -233,8 +234,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       if (!live) return;
       // A message can move into a refreshed page while queries are in flight.
       const unique = [...new Map(all.map((m) => [keyOf(m), m])).values()];
-      const p = { ...result, messages: unique };
-      const effectiveAnchor = anchor && unique.some((m) => keyOf(m) === keyOf(anchor)) ? anchor : null;
+      const p = { ...result, hasNewer, messages: unique };
+      // A target that is the newest message leaves the list at the latest, where new messages show.
+      const effectiveAnchor = anchor && hasNewer && unique.some((m) => keyOf(m) === keyOf(anchor)) ? anchor : null;
       loaded.current = { scope, gen: state.msgGen, page: p, anchor: effectiveAnchor };
       setHistorical(effectiveAnchor !== null);
       setPage((prev) => ({ ...p, messages: reconcile(prev?.messages ?? [], p.messages) }));

@@ -2,6 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.1.6
+
+- Opening a notification for the newest message stays on the latest messages, so "Viewing older messages" only appears when newer ones exist.
+- Notification bodies are no longer cut off at 300 characters.
+
 ## 0.1.5
 
 - Hide the default browser context menu outside text fields in production builds, while keeping native editing commands and message actions.

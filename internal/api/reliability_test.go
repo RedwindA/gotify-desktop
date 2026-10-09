@@ -36,7 +36,7 @@ func TestDeepAndMissingTargetsUseBoundedQueries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if b.queries > 2 || len(p.Messages) > 100 {
+		if b.queries > 3 || len(p.Messages) > 100 {
 			t.Fatalf("unbounded target lookup: queries=%d rows=%d", b.queries, len(p.Messages))
 		}
 	}

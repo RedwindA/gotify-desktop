@@ -204,6 +204,9 @@ type MessagePage struct {
 	Messages []Message            `json:"messages"`
 	// HasMore is true when Next can load another page.
 	HasMore bool `json:"hasMore"`
+	// HasNewer is true when the page starts at Query.Include and newer messages
+	// match the query.
+	HasNewer bool `json:"hasNewer"`
 	// MsgGen is the State.MsgGen the page was read at.
 	MsgGen uint64 `json:"msgGen"`
 }
@@ -444,6 +447,7 @@ func (d *Desktop) Messages(q Query) (MessagePage, error) {
 		limit = pageSize
 	}
 	query := store.MessageQuery{ServerID: q.ServerID, AppID: q.AppID, Search: strings.TrimSpace(q.Search), Limit: limit + 1, Before: q.Before}
+	hasNewer := false
 	if q.Include != nil && q.Include.ServerID > 0 && q.Include.ID > 0 && (q.ServerID == 0 || q.ServerID == q.Include.ServerID) {
 		target, err := d.be.Messages(store.MessageQuery{ServerID: q.Include.ServerID, ID: q.Include.ID, AppID: q.AppID, Search: query.Search, Limit: 1})
 		if err != nil {
@@ -451,8 +455,15 @@ func (d *Desktop) Messages(q Query) (MessagePage, error) {
 		}
 		if len(target) > 0 {
 			m := target[0]
-			query.Before = &store.MessageCursor{Date: m.Date, ID: m.ID, ServerID: m.ServerID}
-			query.Inclusive = true
+			newest, err := d.be.Messages(store.MessageQuery{ServerID: q.ServerID, AppID: q.AppID, Search: query.Search, Limit: 1})
+			if err != nil {
+				return MessagePage{}, err
+			}
+			if len(newest) > 0 && (newest[0].ServerID != m.ServerID || newest[0].ID != m.ID) {
+				hasNewer = true
+				query.Before = &store.MessageCursor{Date: m.Date, ID: m.ID, ServerID: m.ServerID}
+				query.Inclusive = true
+			}
 		}
 	}
 	msgs, err := d.be.Messages(query)
@@ -463,7 +474,7 @@ func (d *Desktop) Messages(q Query) (MessagePage, error) {
 	if more {
 		msgs = msgs[:limit]
 	}
-	page := MessagePage{HasMore: more, MsgGen: gen, Messages: make([]Message, 0, len(msgs))}
+	page := MessagePage{HasMore: more, HasNewer: hasNewer, MsgGen: gen, Messages: make([]Message, 0, len(msgs))}
 	for _, m := range msgs {
 		img := notify.BigImageURL(m.Extras)
 		src := ""

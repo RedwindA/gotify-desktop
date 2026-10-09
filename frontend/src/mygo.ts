@@ -66,6 +66,11 @@ export interface MessagePage {
   messages: Message[];
   /** HasMore is true when Next can load another page. */
   hasMore: boolean;
+  /**
+   * HasNewer is true when the page starts at Query.Include and newer messages
+   * match the query.
+   */
+  hasNewer: boolean;
   /** MsgGen is the State.MsgGen the page was read at. */
   msgGen: number;
 }
