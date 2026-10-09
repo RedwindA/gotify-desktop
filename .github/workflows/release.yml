@@ -1,6 +1,6 @@
-# Pushing a tag vX.Y.Z builds every platform and drafts a GitHub release with
-# the packages and the update files that installed apps check once it is
-# published. The tag must match "version" in mygo.json. Only updates are
+# Pushing a tag vX.Y.Z builds every platform and publishes a GitHub release
+# with the packages and the update files that installed apps check, so they
+# update right away. The tag must match "version" in mygo.json. Only updates are
 # signed (MYGO_UPDATER_PRIVATE_KEY, from mygo keygen): macOS gets mygo's
 # ad-hoc signature, Windows none.
 name: Release
@@ -121,11 +121,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Draft the release
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
           sha256sum * > SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME" *
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" *
