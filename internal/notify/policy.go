@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
-
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -94,7 +92,6 @@ type Planned struct {
 }
 
 const (
-	maxBodyRunes    = 300
 	summaryMaxLines = 5
 	burstMaxLines   = 3
 )
@@ -339,14 +336,11 @@ func ClickURL(extras map[string]any) string {
 	return httpURL(click["url"])
 }
 
-// PlainBody renders a message body as plain text of at most ~300 runes.
+// PlainBody renders a message body as plain text.
 func PlainBody(m gotify.Message) string {
 	body := strings.TrimSpace(m.Message)
 	if ct, _ := extraMap(m.Extras, "client::display")["contentType"].(string); ct == "text/markdown" {
 		body = markdownToPlain(body)
-	}
-	if utf8.RuneCountInString(body) > maxBodyRunes {
-		body = string([]rune(body)[:maxBodyRunes]) + "…"
 	}
 	return body
 }

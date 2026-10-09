@@ -168,8 +168,8 @@ func TestMarkdownToPlain(t *testing.T) {
 		t.Errorf("plain text altered: %q", got)
 	}
 	long := PlainBody(gotify.Message{Message: strings.Repeat("é", 500)})
-	if r := []rune(long); len(r) != maxBodyRunes+1 || r[len(r)-1] != '…' {
-		t.Errorf("truncate: %d runes", len(r))
+	if long != strings.Repeat("é", 500) {
+		t.Errorf("long body altered: %d runes", len([]rune(long)))
 	}
 }
 
