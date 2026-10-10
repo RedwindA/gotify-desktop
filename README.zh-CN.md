@@ -6,8 +6,10 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/main-zh-dark.png">
-  <img alt="主窗口，显示来自两个服务器的消息" src="docs/main-zh-light.png">
+  <img alt="macOS 上的 Gotify Desktop，带原生毛玻璃侧边栏，显示来自两个服务器的消息" src="docs/main-zh-light.png">
 </picture>
+
+截图来自 macOS 原生应用，使用演示数据，展示原生毛玻璃侧边栏。侧边栏会融合窗口后方的桌面背景，效果随壁纸和主题变化。[浅色](docs/main-zh-light.png) · [深色](docs/main-zh-dark.png)
 
 ## 为什么不直接开着 Gotify 网页？
 
@@ -22,7 +24,7 @@ gotify/server 自带的 WebUI 很适合管理服务器，但用来在桌面上�
   - 显示消息 extras 中的大图，点击通知打开 extras 中的链接。
 - **同时连接多个服务器。** WebUI 一次只能登录一个服务器；这里每个服务器都有自己的连接，消息汇总在同一个列表里。
 - **本地历史。** 消息保存在本地 SQLite 数据库中，服务器宕机时也能查看历史。client token 以明文存放在同目录的 `tokens.json` 中，只有当前用户可读：能读到这个文件的人就能以你的 Gotify 用户身份操作。
-- **桌面窗口体验。** 消息正文用 Markdown 渲染，图片可以在应用内查看；支持深浅色主题和中英文；消息很多时列表依然流畅。
+- **桌面窗口体验。** macOS 上使用原生毛玻璃侧边栏；消息正文用 Markdown 渲染，图片可以在应用内查看；支持深浅色主题和中英文；消息很多时列表依然流畅。
 
 WebUI 仍然更擅长的地方：不用安装，任何有浏览器的设备都能用，而且能管理服务器，包括应用、客户端、用户和插件。Gotify Desktop 只负责接收消息，这些操作请继续在 WebUI 里完成。
 

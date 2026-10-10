@@ -9,7 +9,7 @@ a React frontend in `frontend/` built with the Astryx design system (`@astryxdes
 - No cgo. Everything must build with `CGO_ENABLED=0` for windows, darwin and linux.
 - Dependencies are pinned to exact versions published at least 7 days ago (`frontend/bunfig.toml` enforces it for npm).
 - Use Astryx components and props for the UI; plain CSS in `frontend/src/app.css` only for what they do not cover.
-- A major UI change (layout, navigation, the look of the main window) renders the README's `docs/main-*.png` again with GOTIFY_SCREENSHOTS (see Commands).
+- A major UI change (layout, navigation, the look of the main window) refreshes the README's `docs/main-*.png` (see Commands). For the macOS frosted-glass sidebar, capture the native demo app from the screen; GOTIFY_SCREENSHOTS disables native materials.
 
 ## Layout
 
@@ -44,13 +44,20 @@ GOTIFY_IT=1 go test -race -count=1 ./internal/itest ./internal/app
 go run ./cmd/genicons                      # resources/icon.svg and the PNGs (mygo's own SVG renderer)
 go run ./cmd/preview                       # the built page with demo data at http://127.0.0.1:5174
 bun run --cwd frontend screenshots         # dist/screenshots/*.png through the preview and Chrome, light and dark
-# The README's docs/main-*.png: the app built for this machine renders its views over demo data (GOTIFY_SCREENSHOTS, screenshots.go)
+# Automated reference images: the app built for this machine renders its views over demo data (GOTIFY_SCREENSHOTS, screenshots.go)
 # in a window of its own, English and Chinese, light and dark, at the display's scale (2x on Retina or at 200%), then quits.
 go run github.com/egoist/mygo/cmd/mygo build -o build
 GOTIFY_SCREENSHOTS=dist/app-screenshots "build/darwin-arm64/Gotify Desktop.app/Contents/MacOS/Gotify Desktop"      # macOS
 $env:GOTIFY_SCREENSHOTS = "dist/app-screenshots"; & "build/windows-amd64/Gotify Desktop.exe" 2>&1 | Out-Host        # Windows PowerShell: the pipe waits and shows the log
 GDK_BACKEND=x11 GDK_SCALE=2 GOTIFY_SCREENSHOTS=dist/app-screenshots xvfb-run -a -s "-screen 0 2560x1600x24" build/linux-amd64/gotify-desktop
 # (Linux, also headless: Xvfb at 2x; without GDK_BACKEND=x11 GTK may pick a Wayland socket and ignore GDK_SCALE)
+# The README's macOS docs/main-*.png need the composited screen, not CapturePage or a window-only capture:
+# GOTIFY_SCREENSHOTS disables native materials; window-only capture omits the desktop behind the sidebar.
+GOTIFY_DEMO=1 "build/darwin-arm64/Gotify Desktop.app/Contents/MacOS/Gotify Desktop"
+# In Settings, choose English / 简体中文 and Light / Dark; select "CPU temperature normal" in All messages.
+# Keep the window focused, with no overlays, over the same wallpaper. Capture its on-screen bounds:
+# screencapture -x -R<x>,<y>,<width>,<height> docs/main-light.png
+# Repeat for main-dark.png, main-zh-light.png and main-zh-dark.png (actual bounds, not literal placeholders).
 # Windows/macOS/Linux packages into build/ (macOS signing and .dmg need a Mac; the Windows installer needs makensis)
 go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64,windows/arm64,darwin/universal,linux/amd64 -o build
 
