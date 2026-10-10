@@ -57,12 +57,16 @@ func main() {
 	if mygo.App.Version() == "" {
 		mygo.App.SetVersion("dev")
 	}
-	mygo.Use(updater.Plugin)
-	setupLogging()
-	if !mygo.App.RequestSingleInstanceLock() {
-		return
+	d := &desktop{activationLaunch: notify.IsActivationLaunch(os.Args), shots: os.Getenv("GOTIFY_SCREENSHOTS")}
+	// Screenshots never update the app, log to stderr, and run beside an
+	// installed app, which holds the lock.
+	if d.shots == "" {
+		mygo.Use(updater.Plugin)
+		setupLogging()
+		if !mygo.App.RequestSingleInstanceLock() {
+			return
+		}
 	}
-	d := &desktop{activationLaunch: notify.IsActivationLaunch(os.Args)}
 	// The images of messages come from a scheme of their own, which WebView2
 	// serves under http://<scheme>.localhost.
 	imageBase := imageScheme + "://localhost/"
@@ -78,7 +82,7 @@ func main() {
 		CopyText:        mygo.Clipboard.WriteText,
 		ImageBase:       imageBase,
 		Confirm:         d.confirm,
-		Appearance:      systemAppearance,
+		Appearance:      d.appearance,
 		CheckForUpdates: updater.CheckForUpdates,
 	})
 	// Before Run, so macOS never installs the default menu (it has Reload and zoom).
@@ -140,7 +144,7 @@ func (demoController) HandleActivation(id string) app.Activation {
 	return app.Activation{Kind: kind, ServerID: serverID, AppID: appID, MessageID: msgID}
 }
 
-func (d *desktop) demo() controller {
+func (d *desktop) demo() demoController {
 	// The demo's image comes from a scheme of its own, which WebView2 serves under http://<scheme>.localhost.
 	mygo.Protocol.HandleFunc("demo", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
@@ -158,6 +162,7 @@ func (d *desktop) demo() controller {
 type desktop struct {
 	activationLaunch bool
 	startHidden      bool
+	shots            string // GOTIFY_SCREENSHOTS: the directory to render the views into, then quit
 
 	ctrl     controller
 	api      *api.Controller
@@ -190,7 +195,9 @@ func (d *desktop) start() {
 		log.Printf("notifications unavailable: %v", err)
 		d.notifier, err = notify.Unsupported(), nil
 	}
-	if os.Getenv("GOTIFY_DEMO") == "1" {
+	if d.shots != "" {
+		d.ctrl = screenshotController{d.demo()}
+	} else if os.Getenv("GOTIFY_DEMO") == "1" {
 		d.ctrl = d.demo()
 	} else {
 		d.ctrl, err = app.New(app.Options{
@@ -207,6 +214,11 @@ func (d *desktop) start() {
 	d.applyTheme(d.ctrl.Settings().Theme)
 	d.installAppMenu()
 	d.api.Start(d.ctrl, dataDir)
+	if d.shots != "" {
+		d.showWindow()
+		go d.screenshots()
+		return
+	}
 
 	d.notifier.OnActivate(d.activated)
 	mygo.Power.OnResume(d.ctrl.KickAll)
@@ -287,7 +299,10 @@ func (d *desktop) showWindow() {
 			// It also paints the first frame over a material, so that frame is not white.
 			BackgroundColor: "light-dark(#f1f1f1, #1b1b1b)",
 		}
-		if windowMaterial() != api.MaterialNone {
+		if d.shots != "" {
+			// The same size every time, and the page paints its own background.
+			opts.StateKey = ""
+		} else if windowMaterial() != api.MaterialNone {
 			opts.Transparent = true
 			opts.Vibrancy = mygo.VibrancySidebar
 		}
@@ -334,7 +349,10 @@ func isAppOrigin(u *url.URL) bool {
 	return h == "mygo.localhost" || h == "localhost" || h == "127.0.0.1"
 }
 
-func systemAppearance() api.Appearance {
+func (d *desktop) appearance() api.Appearance {
+	if d.shots != "" {
+		return api.Appearance{} // the theme's own accent and no material, as on every system
+	}
 	return api.Appearance{Accent: appearance.Accent(), Material: windowMaterial()}
 }
 

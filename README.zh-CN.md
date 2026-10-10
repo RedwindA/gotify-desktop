@@ -5,8 +5,8 @@
 [Gotify](https://gotify.net) 的桌面客户端，只接收消息。它常驻托盘，保持和一个或多个 Gotify 服务器的连接，把消息显示为系统原生通知。优先支持 Windows，其次 macOS，Linux 也能用。
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/main-dark.png">
-  <img alt="主窗口，显示来自两个服务器的消息" src="docs/main-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/main-zh-dark.png">
+  <img alt="主窗口，显示来自两个服务器的消息" src="docs/main-zh-light.png">
 </picture>
 
 ## 为什么不直接开着 Gotify 网页？
