@@ -6,8 +6,10 @@ A receive-only desktop client for [Gotify](https://gotify.net). It sits in the t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/main-dark.png">
-  <img alt="The main window with messages from two servers" src="docs/main-light.png">
+  <img alt="Gotify Desktop on macOS with a native translucent sidebar and messages from two servers" src="docs/main-light.png">
 </picture>
+
+Captured on macOS with demo data and the native frosted-glass sidebar. The sidebar blends with the desktop behind the window; its appearance varies with the wallpaper and theme. [Light](docs/main-light.png) · [Dark](docs/main-dark.png)
 
 ## Why not just keep the Gotify web UI open?
 
@@ -22,7 +24,7 @@ The web UI that ships with gotify/server is good for managing a server. It is no
   - big images and click URLs from the message extras.
 - **Several servers at once.** The web UI logs in to one server; here every server has its own connection and they share one message list.
 - **Local history.** Messages are kept in a local SQLite database, so history stays readable while a server is down. Client tokens are kept in plain text in `tokens.json` next to it, readable only by your user account: anyone who can read that file can act as your Gotify user.
-- **A desktop window.** Markdown message bodies, images viewed in the app, light and dark themes, English and Simplified Chinese, and a message list that stays fast with many messages.
+- **A desktop window.** A native frosted-glass sidebar on macOS, Markdown message bodies, images viewed in the app, light and dark themes, English and Simplified Chinese, and a message list that stays fast with many messages.
 
 What the web UI still does better: it needs no install, works from any device with a browser, and manages the server: applications, clients, users and plugins. Gotify Desktop only receives messages, so keep using the web UI for those.
 
