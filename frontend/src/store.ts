@@ -54,9 +54,13 @@ export function go(r: Route) {
 
 // The route outlives the page, which closing the window destroys: a window
 // opened again from the tray shows what the last one showed.
+// The app's screenshot mode (?screenshots) shares the storage of the installed
+// app, maybe running beside it, and leaves its route alone.
 const routeKey = "route";
+const remembers = !new URLSearchParams(location.search).has("screenshots");
 
 function remember(hash: string) {
+  if (!remembers) return;
   try {
     localStorage.setItem(routeKey, hash);
   } catch {
@@ -64,7 +68,7 @@ function remember(hash: string) {
   }
 }
 
-if (!location.hash || location.hash === "#") {
+if (remembers && (!location.hash || location.hash === "#")) {
   try {
     const saved = localStorage.getItem(routeKey);
     if (saved) history.replaceState(null, "", saved);

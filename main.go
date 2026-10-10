@@ -191,7 +191,10 @@ func (d *desktop) start() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if d.notifier, err = notify.New(appID, appName, cacheDir, appIcon); err != nil {
+	if d.shots != "" {
+		// Windows would register this build as the installed app's notification activator.
+		d.notifier = notify.Unsupported()
+	} else if d.notifier, err = notify.New(appID, appName, cacheDir, appIcon); err != nil {
 		log.Printf("notifications unavailable: %v", err)
 		d.notifier, err = notify.Unsupported(), nil
 	}
@@ -300,8 +303,9 @@ func (d *desktop) showWindow() {
 			BackgroundColor: "light-dark(#f1f1f1, #1b1b1b)",
 		}
 		if d.shots != "" {
-			// The same size every time, and the page paints its own background.
-			opts.StateKey = ""
+			// The same size every time, the page paints its own background
+			// and leaves the installed app's remembered route alone.
+			opts.StateKey, opts.URL = "", "/?screenshots"
 		} else if windowMaterial() != api.MaterialNone {
 			opts.Transparent = true
 			opts.Vibrancy = mygo.VibrancySidebar
