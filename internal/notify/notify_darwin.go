@@ -3,14 +3,17 @@
 package notify
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -31,6 +34,9 @@ const (
 	interruptPassive       = 0
 	interruptActive        = 1
 	interruptTimeSensitive = 2
+
+	// addTimeout bounds the wait for the system to accept a notification.
+	addTimeout = 5 * time.Second
 )
 
 type darwinNotifier struct {
@@ -97,6 +103,14 @@ func callBlock(block uintptr, args ...uintptr) {
 	purego.SyscallN(lit[2], a[:n+1]...)
 }
 
+// nsError is an NSError's description, or nil for none.
+func nsError(err objc.ID) error {
+	if err == 0 {
+		return nil
+	}
+	return errors.New(goString(send(err, "localizedDescription")))
+}
+
 func load(path string) { purego.Dlopen(path, purego.RTLD_GLOBAL|purego.RTLD_NOW) }
 
 func registerDelegateClass() {
@@ -160,7 +174,13 @@ func New(appID, appName, cacheDir string, appIconPNG []byte) (Notifier, error) {
 		n.center = send(cls("UNUserNotificationCenter"), "currentNotificationCenter")
 		delegate := send(send(cls("GotifyDesktopNotificationDelegate"), "alloc"), "init") // owned for the process lifetime
 		send(n.center, "setDelegate:", delegate)
-		blk := objc.NewBlock(func(_ objc.Block, granted bool, err objc.ID) {})
+		// Denied, Show fails with the system's reason. A bundle's executable
+		// started directly, not through Launch Services, is always denied.
+		blk := objc.NewBlock(func(_ objc.Block, granted bool, err objc.ID) {
+			if !granted {
+				log.Printf("notify: not authorized: %v", nsError(err))
+			}
+		})
 		send(n.center, "requestAuthorizationWithOptions:completionHandler:", uint(1<<0|1<<1|1<<2), blk) // badge | sound | alert
 		blk.Release()
 	})
@@ -171,10 +191,13 @@ func (n *darwinNotifier) Supported() bool { return n.supported }
 
 func (n *darwinNotifier) OnActivate(fn func(string)) { n.act.set(fn) }
 
+// Show waits for the system to accept the notification, so that a refusal,
+// such as missing authorization, is an error rather than nothing showing.
 func (n *darwinNotifier) Show(nn Notification) error {
 	if !n.supported {
 		return ErrUnsupported
 	}
+	done := make(chan error, 1)
 	withPool(func() {
 		content := send(send(cls("UNMutableNotificationContent"), "alloc"), "init")
 		defer send(content, "release")
@@ -205,9 +228,19 @@ func (n *darwinNotifier) Show(nn Notification) error {
 			send(content, "setAttachments:", send(cls("NSArray"), "arrayWithObject:", att))
 		}
 		req := send(cls("UNNotificationRequest"), "requestWithIdentifier:content:trigger:", nsString(nn.ID), content, objc.ID(0))
-		send(n.center, "addNotificationRequest:withCompletionHandler:", req, objc.ID(0))
+		blk := objc.NewBlock(func(_ objc.Block, err objc.ID) { done <- nsError(err) })
+		send(n.center, "addNotificationRequest:withCompletionHandler:", req, blk)
+		blk.Release()
 	})
-	return nil
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("notify: %w", err)
+		}
+		return nil
+	case <-time.After(addTimeout):
+		return errors.New("notify: the system did not accept the notification in time")
+	}
 }
 
 // attachment copies path first because the system moves the file it is given.

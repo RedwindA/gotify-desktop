@@ -25,7 +25,19 @@ try {
   const page = await browser.newPage({ viewport: { width: 1400, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  let navigateToOld = false;
+  let navigation: { serverId: number; appId: number; messageId: number } | null = null;
+  // The test fires the page's events, and can make the route follow a hash change late, as a busy page does.
+  await page.route("**/__mygo.js", async (route) => {
+    const res = await route.fetch();
+    await route.fulfill({ response: res, body: (await res.text()).replace("const listeners = new Map();", "const listeners = window.__listeners = new Map();") });
+  });
+  await page.addInitScript(() => {
+    const add = window.addEventListener;
+    window.addEventListener = function (type: string, fn: any, opts?: any) {
+      if (type !== "hashchange") return add.call(this, type, fn, opts);
+      return add.call(this, type, (e: Event) => setTimeout(() => fn(e), (window as any).__hashDelay ?? 0), opts);
+    } as typeof window.addEventListener;
+  });
   const queries: { limit: number; before: { id: number } | null }[] = [];
   const messages = Array.from({ length: 350 }, (_, i) => ({
     serverId: 1, appId: 1, id: 350 - i, title: `Fixture ${350 - i}`, body: "Pagination regression message",
@@ -44,9 +56,10 @@ try {
       await route.fulfill({ json: { result: { messages: rows, hasMore: matching.length > rows.length,
         next: matching.length > rows.length && last ? { date: last.date, id: last.id, serverId: last.serverId } : null,
         hasNewer, msgGen: 1 } } });
-    } else if (method === "Desktop.TakeNavigation" && navigateToOld) {
-      navigateToOld = false;
-      await route.fulfill({ json: { result: { serverId: 1, appId: 1, messageId: 150 } } });
+    } else if (method === "Desktop.TakeNavigation" && navigation) {
+      const result = navigation;
+      navigation = null;
+      await route.fulfill({ json: { result } });
     } else if (method === "Desktop.MarkAllRead") {
       await route.fulfill({ status: 500, json: { error: "Read operation failed: disk full" } });
     } else await route.continue();
@@ -71,13 +84,25 @@ try {
   assert.ok(queries.every((q) => q.limit === 100), "page size grew without a bound");
   await page.getByRole("button", { name: /Mark all.*read/i }).click();
   await page.getByText("Read operation failed: disk full", { exact: false }).first().waitFor();
-  navigateToOld = true;
+  navigation = { serverId: 1, appId: 1, messageId: 150 };
   await page.reload();
   await fixture(150).waitFor();
   await page.getByRole("button", { name: "Show latest messages" }).click();
   await fixture(350).waitFor();
+  // A notification clicked on all messages opens its app's page with the message selected, even when
+  // the page being left loads it before the route changes.
+  await page.evaluate(() => (location.hash = "#/"));
+  await fixture(350).waitFor();
+  await page.evaluate(() => ((window as any).__hashDelay = 300));
+  navigation = { serverId: 1, appId: 1, messageId: 200 };
+  const sent = queries.length;
+  await page.evaluate(() => (window as any).__listeners.get("navigate").forEach((fn: (p: unknown) => void) => fn(null)));
+  // The page left behind may show the message for a moment; the app's page must keep it.
+  for (let i = 0; !queries.slice(sent).some((q: any) => q.appId === 1) && i < 100; i++) await page.waitForTimeout(20);
+  await page.locator(".msg-read-pane").getByText("Fixture 200", { exact: true }).waitFor({ timeout: 3000 });
+  assert.equal(await page.evaluate(() => location.hash), "#/s/1/a/1");
   assert.deepEqual(errors, []);
-  console.log("PASS: cursor pagination, historical navigation, return to latest, and visible read failure");
+  console.log("PASS: cursor pagination, historical navigation, return to latest, notification navigation, and visible read failure");
 } finally {
   await browser?.close();
   preview.kill();

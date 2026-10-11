@@ -223,8 +223,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const readingRef = useRef(false);
   const wideRef = useRef(false);
   const deletingRef = useRef(deleting);
-  const nav = useNavTarget();
-  const target = nav && nav.serverId !== 0 && (serverId === 0 || nav.serverId === serverId) ? nav : null;
+  const target = useNavTarget(serverId, appId);
 
   useLayoutEffect(() => {
     if (!pageEl) return;

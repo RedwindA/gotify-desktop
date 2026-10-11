@@ -103,15 +103,23 @@ function navigate(n: Navigation | null) {
   for (const l of navListeners) l();
 }
 
-/** The message a notification asked to show, until takeNavTarget clears it. */
-export function useNavTarget(): Navigation | null {
-  return useSyncExternalStore(
+/**
+ * The message a notification asked to show, until clearNavTarget clears it,
+ * for the messages page of serverId and appId. Only the page of the current
+ * hash takes it: navigate changes the hash before the route follows, and the
+ * page being left would otherwise take it and leave none for the next.
+ */
+export function useNavTarget(serverId: number, appId: number): Navigation | null {
+  const nav = useSyncExternalStore(
     (l) => {
       navListeners.add(l);
       return () => navListeners.delete(l);
     },
     () => navTarget,
   );
+  if (!nav || nav.serverId === 0 || (serverId !== 0 && nav.serverId !== serverId)) return null;
+  const r = parseRoute(location.hash);
+  return r.page === "messages" && r.serverId === serverId && r.appId === appId ? nav : null;
 }
 
 export function clearNavTarget() {

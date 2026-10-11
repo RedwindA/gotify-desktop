@@ -55,6 +55,7 @@ GDK_BACKEND=x11 GDK_SCALE=2 GOTIFY_SCREENSHOTS=dist/app-screenshots xvfb-run -a 
 # The README's macOS docs/main-*.png need the composited screen, not CapturePage or a window-only capture:
 # GOTIFY_SCREENSHOTS disables native materials; window-only capture omits the desktop behind the sidebar.
 GOTIFY_DEMO=1 "build/darwin-arm64/Gotify Desktop.app/Contents/MacOS/Gotify Desktop"
+# (Started directly, not through Launch Services, the app is denied notifications; to try them: open --env GOTIFY_DEMO=1 "build/darwin-arm64/Gotify Desktop.app")
 # In Settings, choose English / 简体中文 and Light / Dark; select "CPU temperature normal" in All messages.
 # Keep the window focused, with no overlays, over the same wallpaper. Capture its on-screen bounds:
 # screencapture -x -R<x>,<y>,<width>,<height> docs/main-light.png
