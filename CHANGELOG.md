@@ -2,6 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.2.3
+
+- Clicking a notification selects its message in the reading pane every time, also from All messages.
+- On macOS, Send test notification reports why the system refused a notification instead of saying it was sent.
+
 ## 0.2.2
 
 - On macOS, resizing the window or entering full screen no longer crashes.
