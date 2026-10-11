@@ -96,7 +96,7 @@ jobs:
         run: |
           mkdir dist
           for arch in amd64 arm64; do
-            mv "build/windows-$arch/Gotify Desktop Setup $VERSION.exe" "dist/Gotify-Desktop-$VERSION-windows-$arch-setup.exe"
+            mv "build/windows-$arch/Gotify Desktop Setup $VERSION $arch.exe" "dist/Gotify-Desktop-$VERSION-windows-$arch-setup.exe"
           done
           # The manifests and install.sh find the archives and deltas by
           # their names: keep mygo's.

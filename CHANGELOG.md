@@ -2,6 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.2.2
+
+- On macOS, resizing the window or entering full screen no longer crashes.
+- On Windows, a call from the page ends when the window closes or the webview cannot start.
+
 ## 0.2.1
 
 - On macOS, right-clicking a message shows its menu again, and selected text stays selected while the menu is open.

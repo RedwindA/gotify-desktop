@@ -10,7 +10,7 @@
         "@stylexjs/stylex": "0.19.1",
         "@tanstack/react-virtual": "3.14.13",
         "lucide-react": "1.48.0",
-        "mygo-runtime": "0.2.9",
+        "mygo-runtime": "0.4.1",
         "react": "19.3.0",
         "react-dom": "19.3.0",
       },
@@ -316,7 +316,7 @@
 
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
 
-    "mygo-runtime": ["mygo-runtime@0.2.9", "", {}, "sha512-WNQ4gWSnU0erSuOs3Pgrq8AaBMHJb9moiqdfU3Bre1hi0USm5AHS+0N/XkbTWXd+PbdLYLYQ3DfZf1MAU+J/mA=="],
+    "mygo-runtime": ["mygo-runtime@0.4.1", "", {}, "sha512-onh9i86rfGJoSKAuwWForzZ2wmgJaUGdiFU+8cmVhfalJ74W3Uh/64FLcXB5Wl+CKjwy2K2gbHiFPyr5E71pFA=="],
 
     "nanoid": ["nanoid@3.3.19", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug=="],
 

@@ -8,6 +8,7 @@ a React frontend in `frontend/` built with the Astryx design system (`@astryxdes
 
 - No cgo. Everything must build with `CGO_ENABLED=0` for windows, darwin and linux.
 - Dependencies are pinned to exact versions published at least 7 days ago (`frontend/bunfig.toml` enforces it for npm).
+  mygo is the exception (`github.com/egoist/mygo` and `mygo-runtime`, kept on the same version): take its new releases right away.
 - Use Astryx components and props for the UI; plain CSS in `frontend/src/app.css` only for what they do not cover.
 - A major UI change (layout, navigation, the look of the main window) refreshes the README's `docs/main-*.png` (see Commands). For the macOS frosted-glass sidebar, capture the native demo app from the screen; GOTIFY_SCREENSHOTS disables native materials.
 
