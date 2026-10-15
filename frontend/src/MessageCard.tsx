@@ -1,9 +1,11 @@
+import { Code } from "@astryxdesign/core/Code";
 import { ContextMenu } from "@astryxdesign/core/ContextMenu";
 import { Lightbox } from "@astryxdesign/core/Lightbox";
 import { Link } from "@astryxdesign/core/Link";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { Text } from "@astryxdesign/core/Text";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
 import { findLinks, markdownLinks } from "./links";
@@ -42,7 +44,66 @@ function MessageLink({ href, children }: { href: string; children: ReactNode }) 
   );
 }
 
-const markdownComponents = { link: MessageLink };
+/**
+ * Inline code in a markdown body, which a click copies. A drag inside it still selects
+ * (it takes no focus, which would stop that), and code inside a link stays part of the link.
+ */
+function CopyableCode({ children }: { children: string }) {
+  const t = useT();
+  const ref = useRef<HTMLSpanElement>(null);
+  const [inLink, setInLink] = useState(false);
+  // The tooltip is controlled, with Astryx's hover delay, since a press hides an
+  // uncontrolled one and "Copied" has to show after it.
+  const [hovered, setHovered] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Counts copies; "Copied" shows while it is non-zero.
+  const [copied, setCopied] = useState(0);
+  useLayoutEffect(() => setInLink(!!ref.current?.parentElement?.closest("a")), []);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(0), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+  const close = () => {
+    clearTimeout(hoverTimer.current);
+    setHovered(false);
+    setCopied(0);
+  };
+  if (inLink) {
+    return (
+      <span ref={ref}>
+        <Code>{children}</Code>
+      </span>
+    );
+  }
+  return (
+    <Tooltip
+      content={copied ? t.copied : t.clickToCopy}
+      isOpen={hovered || copied > 0}
+      onOpenChange={(open) => !open && close()}
+      hasHoverIndication={false}>
+      <span
+        ref={ref}
+        className="code-copy"
+        onMouseEnter={() => {
+          clearTimeout(hoverTimer.current);
+          hoverTimer.current = setTimeout(() => setHovered(true), 200);
+        }}
+        onMouseLeave={close}
+        onClick={() => {
+          if (window.getSelection()?.isCollapsed === false) return;
+          void Desktop.copyText(children)
+            .then(() => setCopied((n) => n + 1))
+            .catch(() => {});
+        }}>
+        <Code>{children}</Code>
+      </span>
+    </Tooltip>
+  );
+}
+
+const markdownComponents = { link: MessageLink, inlineCode: CopyableCode };
 
 /** Plain text with its URLs and addresses as links; newlines are kept by the CSS. */
 function PlainBody({ text }: { text: string }) {
