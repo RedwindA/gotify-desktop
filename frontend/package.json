@@ -16,7 +16,7 @@
     "@stylexjs/stylex": "0.19.1",
     "@tanstack/react-virtual": "3.14.13",
     "lucide-react": "1.48.0",
-    "mygo-runtime": "0.4.1",
+    "mygo-runtime": "0.5.1",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
