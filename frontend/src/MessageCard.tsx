@@ -1,12 +1,12 @@
 import { ContextMenu } from "@astryxdesign/core/ContextMenu";
 import { Lightbox } from "@astryxdesign/core/Lightbox";
+import { Link } from "@astryxdesign/core/Link";
 import { Markdown } from "@astryxdesign/core/Markdown";
 import { Text } from "@astryxdesign/core/Text";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
-
-const urlPattern = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g;
+import { findLinks, markdownLinks } from "./links";
 
 export function openMessageLink(href: string) {
   if (!href) return;
@@ -27,25 +27,35 @@ export function previewText(body: string): string {
     .trim();
 }
 
-/** Plain text with its URLs as links; newlines are kept by the CSS. */
+/** A link in a message body, plain or markdown, which opens in the default app. */
+function MessageLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <Link
+      href={href}
+      hasUnderline
+      onClick={(e) => {
+        e.preventDefault();
+        openMessageLink(href);
+      }}>
+      {children}
+    </Link>
+  );
+}
+
+const markdownComponents = { link: MessageLink };
+
+/** Plain text with its URLs and addresses as links; newlines are kept by the CSS. */
 function PlainBody({ text }: { text: string }) {
   const parts: ReactNode[] = [];
   let last = 0;
-  for (const m of text.matchAll(urlPattern)) {
-    parts.push(text.slice(last, m.index));
-    const href = m[0];
+  for (const link of findLinks(text)) {
     parts.push(
-      <a
-        key={m.index}
-        href={href}
-        onClick={(e) => {
-          e.preventDefault();
-          openMessageLink(href);
-        }}>
-        {href}
-      </a>,
+      text.slice(last, link.start),
+      <MessageLink key={link.start} href={link.href}>
+        {link.text}
+      </MessageLink>,
     );
-    last = m.index + href.length;
+    last = link.end;
   }
   parts.push(text.slice(last));
   return (
@@ -92,10 +102,8 @@ export function MessageBody({ msg, title }: { msg: Message; title: string }) {
               density="compact"
               contentWidth="100%"
               headingLevelStart={4}
-              onLinkClick={(href) => {
-                openMessageLink(href);
-                return false;
-              }}>
+              plugins={markdownLinks}
+              components={markdownComponents}>
               {msg.body}
             </Markdown>
           </div>

@@ -60,10 +60,10 @@ func Demo(imageURL string) *FakeBackend {
 			false, md),
 		msg(1, 8, 3, 2*time.Hour, 4, "Front door opened", "The front door was opened at 14:02 while everyone was away.", true,
 			map[string]any{"client::notification": map[string]any{"bigImageUrl": demoSnapshotURL}}),
-		msg(1, 7, 1, 3*time.Hour, 2, "", "Plain text message with a link https://example.com/status and a second line.\nSecond line here.", true, nil),
+		msg(1, 7, 1, 3*time.Hour, 2, "", "Plain text message with a link https://example.com/status, www.example.com and ops@example.com.\nSecond line here.", true, nil),
 		msg(1, 6, 2, 26*time.Hour, 5, "CPU temperature normal", "![chart]("+imageURL+")\n\nBack to **54 °C** after the fan curve change.", true, md),
 		msg(1, 5, 1, 50*time.Hour, 1, "Backup started", "Starting nightly job…", true, nil),
-		msg(2, 31, 1, 9*time.Minute, 7, "Build #1842 failed", "`main` failed at **integration-tests**\n\n1. `TestLogin` timed out\n2. `TestCheckout` flaky",
+		msg(2, 31, 1, 9*time.Minute, 7, "Build #1842 failed", "`main` failed at **integration-tests**\n\n1. `TestLogin` timed out\n2. `TestCheckout` flaky\n\nLog: https://ci.work.example/builds/1842",
 			false, md),
 		msg(2, 30, 2, 5*time.Hour, 3, "Deployed v2.14.0 to production", "Rollout complete in 3m 12s.", true, nil),
 	}

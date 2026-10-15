@@ -201,10 +201,6 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   overflow-wrap: anywhere;
 }
 
-.msg-plain a {
-  color: var(--color-accent);
-}
-
 /* Message images never overflow the reading pane. */
 .msg-view img {
   max-width: 100%;
