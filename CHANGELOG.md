@@ -2,6 +2,12 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.2.4
+
+- Inline code in markdown messages copies with a click.
+- Bare web and e-mail addresses in messages are links that open in the default app, and links are underlined.
+- On Windows, a maximized window stays on its display after being restored from minimized.
+
 ## 0.2.3
 
 - Clicking a notification selects its message in the reading pane every time, also from All messages.
