@@ -16,7 +16,7 @@ import { ServerDialog, type ServerDialogMode } from "./ServerDialog";
 import { SettingsPage } from "./SettingsPage";
 import { Sidebar, type ServerActions } from "./Sidebar";
 import { useT } from "./i18n";
-import { errorText, findServer, go, refreshState, subscribeCommand, useAppState, useRoute } from "./store";
+import { confirm, errorText, findServer, go, refreshState, subscribeCommand, useAppState, useQuestion, useRoute } from "./store";
 
 function Welcome({ onAdd }: { onAdd(): void }) {
   const t = useT();
@@ -62,8 +62,9 @@ export function App() {
   const [removeBusy, setRemoveBusy] = useState(false);
   const [prefs, setPrefs] = useState<{ serverId: number; appId: number } | null>(null);
   const [bootSlow, setBootSlow] = useState(false);
+  const question = useQuestion();
   const blocked = useRef(false);
-  blocked.current = dialog !== null || prefs !== null || removing !== null;
+  blocked.current = dialog !== null || prefs !== null || removing !== null || question !== null;
 
   const onError = useCallback((body: string) => void toast({ body, type: "error" }), [toast]);
 
@@ -135,6 +136,22 @@ export function App() {
     relogin: (server) => setDialog({ kind: "relogin", server }),
     remove: (server) => void askRemove(server),
     markAllRead: (serverId, appId) => void Desktop.markAllRead(serverId, appId),
+    clear: (server, app) =>
+      void (async () => {
+        const yes = await confirm({
+          title: app ? t.clearAppTitle(app.name) : t.clearServerTitle(server.name),
+          message: t.clearText,
+          confirmLabel: t.clearAction,
+          cancelLabel: t.cancel,
+          destructive: true,
+        });
+        if (!yes) return;
+        try {
+          await Desktop.clearMessages(server.id, app?.id ?? 0);
+        } catch (err) {
+          onError(t.couldNotDelete(errorText(err)));
+        }
+      })(),
     appPrefs: (sv: Server, a: GotifyApp) => setPrefs({ serverId: sv.id, appId: a.id }),
   };
   const openAdd = () => setDialog({ kind: "add" });
@@ -180,6 +197,17 @@ export function App() {
         />
       )}
       {prefsServer && prefsApp && <AppPrefsDialog server={prefsServer} app={prefsApp} onClose={() => setPrefs(null)} onError={onError} />}
+      {question && (
+        <AlertDialog
+          isOpen
+          onOpenChange={(open) => !open && question.answer(false)}
+          title={question.confirmation.title}
+          description={question.confirmation.message}
+          actionLabel={question.confirmation.confirmLabel}
+          cancelLabel={question.confirmation.cancelLabel}
+          onAction={() => question.answer(true)}
+        />
+      )}
       {removing && (
         <AlertDialog
           isOpen

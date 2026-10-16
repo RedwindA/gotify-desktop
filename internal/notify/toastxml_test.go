@@ -77,3 +77,24 @@ func TestActivatorCLSID(t *testing.T) {
 		t.Fatalf("not a v5 uuid: %s", a)
 	}
 }
+
+func TestToastXMLActions(t *testing.T) {
+	n := Notification{ID: "s1-m2", Title: "t", Actions: []Action{{ID: ActionRead, Label: "Mark & read"}, {ID: ActionOpen, Label: "Open link"}}}
+	var d struct {
+		Actions []struct {
+			Content    string `xml:"content,attr"`
+			Arguments  string `xml:"arguments,attr"`
+			Activation string `xml:"activationType,attr"`
+		} `xml:"actions>action"`
+	}
+	if err := xml.Unmarshal([]byte(buildToastXML(n)), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Actions) != 2 || d.Actions[0].Content != "Mark & read" || d.Actions[0].Arguments != "s1-m2#read" || d.Actions[0].Activation != "background" ||
+		d.Actions[1].Arguments != "s1-m2#open" || d.Actions[1].Activation != "foreground" {
+		t.Fatalf("%+v", d.Actions)
+	}
+	if strings.Contains(buildToastXML(Notification{ID: "x"}), "<actions>") {
+		t.Fatal("actions without buttons")
+	}
+}

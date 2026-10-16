@@ -438,6 +438,12 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   padding: 8px 8px 0;
 }
 
+/* Several messages selected in a narrow window, where the reading pane is hidden. */
+.msg-selection-bar {
+  flex: none;
+  border-bottom: 1px solid var(--color-border);
+}
+
 .msg-list-scroll,
 .msg-read-scroll {
   flex: 1 1 auto;

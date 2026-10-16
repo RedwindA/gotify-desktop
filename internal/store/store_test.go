@@ -341,3 +341,76 @@ func TestSaveInitialImportIsAtomicAndSetsFloor(t *testing.T) {
 		t.Fatalf("partial import kept: %d", len(left))
 	}
 }
+
+func TestMarkAllReadReturnsTheUnread(t *testing.T) {
+	s, id := open(t)
+	s.SaveMessages(id, []gotify.Message{msg(1, 1, "a"), msg(2, 2, "b"), msg(3, 1, "c")})
+	s.MarkRead(id, 1)
+	if got, err := s.MarkAllRead(id, 1); err != nil || !reflect.DeepEqual(got, []uint{3}) {
+		t.Fatalf("%v %v", got, err)
+	}
+	if got, _ := s.MarkAllRead(id, 0); !reflect.DeepEqual(got, []uint{2}) {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestAppMessageIDsAndRemoval(t *testing.T) {
+	s, id := open(t)
+	s.SaveMessages(id, []gotify.Message{msg(1, 1, "a"), msg(2, 2, "b"), msg(3, 1, "c"), msg(4, 1, "d")})
+	if got, _ := s.AppMessageIDs(id, 1); !reflect.DeepEqual(got, []uint{1, 3, 4}) {
+		t.Fatalf("app ids %v", got)
+	}
+	if got, _ := s.AppMessageIDs(id, 0); !reflect.DeepEqual(got, []uint{1, 2, 3, 4}) {
+		t.Fatalf("server ids %v", got)
+	}
+	if err := s.RemoveMessages(id, []uint{2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	// A copy still on its way is not stored again.
+	if ins, _ := s.SaveMessages(id, []gotify.Message{msg(2, 2, "b"), msg(3, 1, "c")}); len(ins) != 0 {
+		t.Fatalf("removed messages came back: %v", ids(ins))
+	}
+}
+
+func TestPruneFollowsDates(t *testing.T) {
+	s, id := open(t)
+	now := time.Now()
+	at := func(m gotify.Message, d time.Time) gotify.Message { m.Date = d; return m }
+	// The server's clock was wrong for message 3: it is dated long ago.
+	s.SaveMessages(id, []gotify.Message{
+		at(msg(1, 1, "a"), now.AddDate(0, 0, -40)), at(msg(2, 1, "b"), now), at(msg(3, 1, "c"), time.Unix(0, 0)), at(msg(4, 1, "d"), now),
+	})
+	if n, err := s.Prune(now.AddDate(0, 0, -30)); err != nil || n != 2 {
+		t.Fatalf("pruned %d: %v", n, err)
+	}
+	if left, _ := s.MessageIDs(id); !reflect.DeepEqual(left, []uint{2, 4}) {
+		t.Fatalf("left %v", left)
+	}
+	if n, err := s.Prune(now.AddDate(0, 0, -30)); err != nil || n != 0 {
+		t.Fatalf("second prune %d: %v", n, err)
+	}
+}
+
+func TestCatchUpDoesNotStorePrunedMessagesAgain(t *testing.T) {
+	s, id := open(t)
+	now := time.Now()
+	old, kept := msg(1, 1, "a"), msg(3, 1, "c")
+	old.Date, kept.Date = now.AddDate(-1, 0, 0), now
+	s.SaveMessages(id, []gotify.Message{old, kept})
+	if n, _ := s.Prune(now.AddDate(0, 0, -30)); n != 1 {
+		t.Fatalf("pruned %d", n)
+	}
+	// A catch-up hands in the pruned message again, with one that was delayed
+	// below the newest stored: only the delayed one is new.
+	delayed, fresh := msg(2, 1, "b"), msg(4, 1, "d")
+	delayed.Date, fresh.Date = now, now
+	if ins, _ := s.SaveCaughtUp(id, []gotify.Message{old, delayed, kept, fresh}); !reflect.DeepEqual(ids(ins), []uint{2, 4}) {
+		t.Fatalf("stored %v", ids(ins))
+	}
+	// A live message is new even when the server's clock dated it long ago.
+	wrong := msg(5, 1, "e")
+	wrong.Date = time.Unix(0, 0)
+	if ins, _ := s.SaveMessages(id, []gotify.Message{wrong}); len(ins) != 1 {
+		t.Fatal("a live message with an old date was dropped")
+	}
+}

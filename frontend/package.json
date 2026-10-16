@@ -9,6 +9,7 @@
     "test:links": "bun test ./scripts/links.test.ts",
     "test:messages": "bun scripts/messages-test.ts",
     "test:context-menu": "bun scripts/context-menu-test.ts",
+    "test:selection": "bun scripts/selection-test.ts",
     "screenshots": "node scripts/screenshots.ts"
   },
   "dependencies": {

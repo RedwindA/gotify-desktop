@@ -1,7 +1,7 @@
 // The app state from Go, kept up to date by its events, and the page's route.
 import { isCallError } from "mygo-runtime";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Desktop, events, type Command, type Navigation, type Server, type Settings, type State } from "./mygo";
+import { Desktop, events, type Command, type Confirmation, type Navigation, type Server, type Settings, type State } from "./mygo";
 
 let state: State | null = null;
 const listeners = new Set<() => void>();
@@ -163,6 +163,54 @@ export async function start() {
   setState(s);
   navigate(n);
   dispatchCommand(c);
+}
+
+// A question for the user goes to a native message box, or where there is
+// none, to the page's own dialog, which the app renders from useQuestion.
+export interface Question {
+  confirmation: Confirmation;
+  answer(yes: boolean): void;
+}
+
+let question: Question | null = null;
+const questionListeners = new Set<() => void>();
+
+function setQuestion(q: Question | null) {
+  question = q;
+  for (const l of questionListeners) l();
+}
+
+/** Asks the user to confirm, and resolves to whether they did. */
+export async function confirm(confirmation: Confirmation): Promise<boolean> {
+  try {
+    const answer = await Desktop.confirm(confirmation);
+    if (answer !== "unavailable") return answer === "yes";
+  } catch {
+    // Ask in the page.
+  }
+  // A question still open is answered no: one dialog shows at a time.
+  question?.answer(false);
+  return new Promise((resolve) => {
+    const q: Question = {
+      confirmation,
+      answer: (yes) => {
+        if (question === q) setQuestion(null);
+        resolve(yes);
+      },
+    };
+    setQuestion(q);
+  });
+}
+
+/** The question the page asks itself, or null. */
+export function useQuestion(): Question | null {
+  return useSyncExternalStore(
+    (l) => {
+      questionListeners.add(l);
+      return () => questionListeners.delete(l);
+    },
+    () => question,
+  );
 }
 
 /** The text of an error from Go, or of any other error. */

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -127,6 +128,28 @@ func (f *FakeBackend) DeleteMessage(ctx context.Context, serverID int64, id uint
 		}
 	}
 	f.Deleted = append(f.Deleted, id)
+	f.refresh()
+	return nil
+}
+
+func (f *FakeBackend) DeleteMessages(ctx context.Context, serverID int64, ids []uint) error {
+	for _, id := range ids {
+		if err := f.DeleteMessage(ctx, serverID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *FakeBackend) ClearMessages(ctx context.Context, serverID int64, appID uint) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.DeleteErr != nil {
+		return f.DeleteErr
+	}
+	f.Msgs = slices.DeleteFunc(f.Msgs, func(m store.StoredMessage) bool {
+		return m.ServerID == serverID && (appID == 0 || m.AppID == appID)
+	})
 	f.refresh()
 	return nil
 }

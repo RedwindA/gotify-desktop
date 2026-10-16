@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -570,5 +571,65 @@ func TestCatchUpOverlapDoesNotDependOnPageAlignment(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []uint{1, 2, 3, 4, 5, 7, 8, 9, 10}) {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func (f *fakeServer) remove(ids ...uint) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.msgs = slices.DeleteFunc(f.msgs, func(m gotify.Message) bool { return slices.Contains(ids, m.ID) })
+}
+
+func isRemoved(e Event) bool { return e.Kind == EventRemoved }
+
+func TestReconnectRemovesMessagesDeletedOnTheServer(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 5, false)
+	s, rec, st := setup(t, f, Config{})
+	s.Start()
+	_, n := rec.wait(t, 0, isMsgs)
+	f.remove(2, 4)
+	f.dropConns()
+	e, _ := rec.wait(t, n, isRemoved)
+	if !reflect.DeepEqual(e.Removed, []uint{2, 4}) {
+		t.Fatalf("%+v", e)
+	}
+	if left, _ := st.MessageIDs(s.id); !reflect.DeepEqual(left, []uint{1, 3, 5}) {
+		t.Fatalf("left %v", left)
+	}
+}
+
+func TestReconcileChecksOnlyAsDeepAsItPaged(t *testing.T) {
+	f := newFake(t)
+	s, _, st := setup(t, f, Config{})
+	st.SaveMessages(s.id, f.post(1, 450, false))
+	f.remove(10, 300, 449)
+	client, _ := gotify.New(f.URL, "tok", gotify.Options{})
+	// One page holds 251 to 450: 10 lies below it and stays.
+	if err := s.reconcile(context.Background(), client, 1); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := st.MessageIDs(s.id); len(left) != 448 || slices.Contains(left, 300) || slices.Contains(left, 449) || !slices.Contains(left, 10) {
+		t.Fatalf("%d left", len(left))
+	}
+	if err := s.reconcile(context.Background(), client, 100); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := st.MessageIDs(s.id); len(left) != 447 || slices.Contains(left, 10) {
+		t.Fatalf("%d left", len(left))
+	}
+}
+
+func TestReconcileRemovesEverythingWhenTheServerIsEmpty(t *testing.T) {
+	f := newFake(t)
+	s, _, st := setup(t, f, Config{})
+	st.SaveMessages(s.id, f.post(1, 3, false))
+	f.remove(1, 2, 3)
+	client, _ := gotify.New(f.URL, "tok", gotify.Options{})
+	if err := s.reconcile(context.Background(), client, 1); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := st.MessageIDs(s.id); len(left) != 0 {
+		t.Fatalf("left %v", left)
 	}
 }

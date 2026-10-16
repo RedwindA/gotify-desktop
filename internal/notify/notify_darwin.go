@@ -5,6 +5,7 @@ package notify
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"os"
@@ -37,6 +38,8 @@ const (
 
 	// addTimeout bounds the wait for the system to accept a notification.
 	addTimeout = 5 * time.Second
+
+	defaultActionID = "com.apple.UNNotificationDefaultActionIdentifier"
 )
 
 type darwinNotifier struct {
@@ -45,6 +48,11 @@ type darwinNotifier struct {
 	cacheDir  string
 	act       activator
 	seq       atomic.Uint64
+
+	// categories holds the buttons of every category, by identifier:
+	// registering one replaces those registered before.
+	catMu      sync.Mutex
+	categories map[string][]Action
 }
 
 var (
@@ -132,6 +140,9 @@ func registerDelegateClass() {
 			if id == "" {
 				id = goString(send(req, "identifier"))
 			}
+			if action := goString(send(resp, "actionIdentifier")); action != "" && action != defaultActionID && id != "" {
+				id = ActionArgs(id, action)
+			}
 			if n := active.Load(); n != nil {
 				n.act.fire(id)
 			}
@@ -155,7 +166,7 @@ func userInfoSilent(req objc.ID) bool {
 func New(appID, appName, cacheDir string, appIconPNG []byte) (Notifier, error) {
 	load("/System/Library/Frameworks/Foundation.framework/Foundation")
 	load("/System/Library/Frameworks/UserNotifications.framework/UserNotifications")
-	n := &darwinNotifier{cacheDir: filepath.Join(cacheDir, "attachments")}
+	n := &darwinNotifier{cacheDir: filepath.Join(cacheDir, "attachments"), categories: map[string][]Action{}}
 	if cls("UNUserNotificationCenter") == 0 {
 		return n, nil
 	}
@@ -174,6 +185,14 @@ func New(appID, appName, cacheDir string, appIconPNG []byte) (Notifier, error) {
 		n.center = send(cls("UNUserNotificationCenter"), "currentNotificationCenter")
 		delegate := send(send(cls("GotifyDesktopNotificationDelegate"), "alloc"), "init") // owned for the process lifetime
 		send(n.center, "setDelegate:", delegate)
+		// The buttons of notifications from earlier runs, in any language, are
+		// there from the start: registering replaces the categories registered.
+		n.catMu.Lock()
+		for _, actions := range ActionSets() {
+			n.categories[categoryKey(actions)] = actions
+		}
+		n.registerCategories()
+		n.catMu.Unlock()
 		// Denied, Show fails with the system's reason. A bundle's executable
 		// started directly, not through Launch Services, is always denied.
 		blk := objc.NewBlock(func(_ objc.Block, granted bool, err objc.ID) {
@@ -216,6 +235,9 @@ func (n *darwinNotifier) Show(nn Notification) error {
 			level := map[Level]uint{LevelSilent: interruptPassive, LevelNormal: interruptActive, LevelHigh: interruptTimeSensitive}[nn.Level]
 			send(content, "setInterruptionLevel:", level)
 		}
+		if len(nn.Actions) > 0 {
+			send(content, "setCategoryIdentifier:", nsString(n.category(nn.Actions)))
+		}
 		info := send(cls("NSMutableDictionary"), "dictionary")
 		send(info, "setObject:forKey:", nsString(nn.ID), nsString("id"))
 		send(info, "setObject:forKey:", send(cls("NSNumber"), "numberWithBool:", nn.Level == LevelSilent), nsString("silent"))
@@ -241,6 +263,46 @@ func (n *darwinNotifier) Show(nn Notification) error {
 	case <-time.After(addTimeout):
 		return errors.New("notify: the system did not accept the notification in time")
 	}
+}
+
+// categoryKey identifies a set of buttons, and names its category: the same
+// buttons get the same name in every run, so a notification still in the
+// Notification Center from an earlier run keeps its buttons.
+func categoryKey(actions []Action) string {
+	h := fnv.New64a()
+	for _, a := range actions {
+		h.Write([]byte(a.ID + "\x00" + a.Label + "\x00"))
+	}
+	return fmt.Sprintf("gotify-actions-%x", h.Sum64())
+}
+
+// category returns the identifier of the category with these buttons,
+// registering it first when it is new. It runs inside withPool.
+func (n *darwinNotifier) category(actions []Action) string {
+	id := categoryKey(actions)
+	n.catMu.Lock()
+	defer n.catMu.Unlock()
+	if _, ok := n.categories[id]; !ok {
+		n.categories[id] = actions
+		n.registerCategories()
+	}
+	return id
+}
+
+// registerCategories replaces the system's categories with n.categories. It
+// runs inside withPool with catMu held.
+func (n *darwinNotifier) registerCategories() {
+	set := send(cls("NSMutableSet"), "set")
+	for id, actions := range n.categories {
+		buttons := send(cls("NSMutableArray"), "array")
+		for _, a := range actions {
+			send(buttons, "addObject:", send(cls("UNNotificationAction"), "actionWithIdentifier:title:options:", nsString(a.ID), nsString(a.Label), uint(0)))
+		}
+		cat := send(cls("UNNotificationCategory"), "categoryWithIdentifier:actions:intentIdentifiers:options:",
+			nsString(id), buttons, send(cls("NSArray"), "array"), uint(0))
+		send(set, "addObject:", cat)
+	}
+	send(n.center, "setNotificationCategories:", set)
 }
 
 // attachment copies path first because the system moves the file it is given.

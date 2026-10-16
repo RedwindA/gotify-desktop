@@ -16,6 +16,8 @@ export interface ServerActions {
   relogin(sv: Server): void;
   remove(sv: Server): void;
   markAllRead(serverId: number, appId: number): void;
+  /** Deletes the messages of an app, or of the server without one. */
+  clear(sv: Server, app?: App): void;
   appPrefs(sv: Server, app: App): void;
 }
 
@@ -138,6 +140,7 @@ export function Sidebar({
                   { label: t.signInAgainMenu, onClick: () => actions.relogin(sv) },
                   { label: t.markAllRead, onClick: () => actions.markAllRead(sv.id, 0), isDisabled: sv.unread === 0 },
                   { type: "divider" },
+                  { label: t.clearMessages, variant: "destructive", onClick: () => actions.clear(sv) },
                   { label: t.removeServer, variant: "destructive", onClick: () => actions.remove(sv) },
                 ]}
               />
@@ -158,6 +161,8 @@ export function Sidebar({
                   items={[
                     { label: t.notificationSettings, onClick: () => actions.appPrefs(sv, a) },
                     { label: t.markAllRead, onClick: () => actions.markAllRead(sv.id, a.id), isDisabled: a.unread === 0 },
+                    { type: "divider" },
+                    { label: t.clearMessages, variant: "destructive", onClick: () => actions.clear(sv, a) },
                   ]}
                 />
               }

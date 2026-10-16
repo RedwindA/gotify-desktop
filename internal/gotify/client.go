@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gotify-desktop/internal/sysproxy"
 )
 
 var ErrUnauthorized = errors.New("gotify: unauthorized")
@@ -97,6 +99,7 @@ func parseBase(raw string) (*url.URL, error) {
 
 func transport(opts Options) (*http.Transport, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = sysproxy.Proxy
 	cfg := &tls.Config{InsecureSkipVerify: opts.InsecureSkipVerify}
 	if len(opts.CACertPEM) > 0 {
 		pool, err := x509.SystemCertPool()
@@ -215,6 +218,16 @@ func (c *Client) DeleteMessage(ctx context.Context, id uint) error {
 		return nil
 	}
 	return err
+}
+
+// DeleteAppMessages deletes every message of an application.
+func (c *Client) DeleteAppMessages(ctx context.Context, appID uint) error {
+	return c.do(ctx, http.MethodDelete, "/application/"+strconv.FormatUint(uint64(appID), 10)+"/message", nil, nil)
+}
+
+// DeleteAllMessages deletes every message of the user.
+func (c *Client) DeleteAllMessages(ctx context.Context) error {
+	return c.do(ctx, http.MethodDelete, "/message", nil, nil)
 }
 
 // DeleteClient may fail with a 403 *HTTPError when the session is not elevated.

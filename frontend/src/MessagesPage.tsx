@@ -5,17 +5,18 @@ import { HStack, Layout, LayoutContent, LayoutHeader, VStack } from "@astryxdesi
 import { MobileNavToggle } from "@astryxdesign/core/MobileNav";
 import { Skeleton } from "@astryxdesign/core/Skeleton";
 import { Spinner } from "@astryxdesign/core/Spinner";
+import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { ArrowLeftIcon, CheckCheckIcon, InboxIcon, SearchIcon, SearchXIcon } from "lucide-react";
+import { ArrowLeftIcon, CheckCheckIcon, InboxIcon, ListChecksIcon, SearchIcon, SearchXIcon, XIcon } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { openMessageLink } from "./MessageCard";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type SelectHow } from "./MessageRow";
 import { MessageView } from "./MessageView";
 import { Desktop, type Message, type MessagePage, type MessageRef, type Server, type State } from "./mygo";
 import { useT } from "./i18n";
 import { statusText } from "./Sidebar";
-import { clearNavTarget, errorText, findServer, useNavTarget, useNow } from "./store";
+import { clearNavTarget, confirm, errorText, findServer, useNavTarget, useNow } from "./store";
 
 const pageSize = 100;
 const markReadDelay = 1200;
@@ -31,6 +32,54 @@ const splitAt = 720;
 const isMac = /Mac/.test(navigator.userAgent);
 
 const keyOf = (m: { serverId: number; id: number }) => `${m.serverId}/${m.id}`;
+
+const noKeys: ReadonlySet<string> = new Set();
+
+/** What can be done to several messages selected: in the reading pane, or in a bar over a narrow list. */
+function SelectionActions({
+  count,
+  compact,
+  onRead,
+  onDelete,
+  onClear,
+}: {
+  count: number;
+  compact: boolean;
+  onRead(): void;
+  onDelete(): void;
+  onClear(): void;
+}) {
+  const t = useT();
+  const read = <Button label={t.markRead} size="sm" onClick={onRead} />;
+  const del = <Button label={t.delete} size="sm" variant="destructive" onClick={onDelete} />;
+  if (compact)
+    return (
+      <HStack gap={2} vAlign="center" padding={2} className="msg-selection-bar">
+        <Text weight="medium" maxLines={1} className="grow">
+          {t.selectedCount(count)}
+        </Text>
+        {read}
+        {del}
+        <Button label={t.clearSelection} size="sm" variant="ghost" isIconOnly icon={<XIcon size={16} />} tooltip={t.clearSelection} onClick={onClear} />
+      </HStack>
+    );
+  return (
+    <div className="msg-read-empty">
+      <EmptyState
+        icon={<ListChecksIcon size={40} />}
+        title={t.selectedCount(count)}
+        headingLevel={2}
+        actions={
+          <HStack gap={2}>
+            {read}
+            {del}
+            <Button label={t.clearSelection} size="sm" variant="ghost" onClick={onClear} />
+          </HStack>
+        }
+      />
+    </div>
+  );
+}
 
 /** Keeps the objects of messages that did not change, so their rows do not render again. */
 function reconcile(prev: Message[], next: Message[]): Message[] {
@@ -210,6 +259,8 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
   const [readNow, setReadNow] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState("");
+  // The messages selected together, when there are several; selected is then the cursor among them.
+  const [picked, setPicked] = useState<ReadonlySet<string>>(noKeys);
   const [reading, setReading] = useState(false);
   const [highlight, setHighlight] = useState("");
   const [scrollTo, setScrollTo] = useState("");
@@ -220,6 +271,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const shownQuery = useRef(query);
   const messagesRef = useRef<Message[]>([]);
   const selectedRef = useRef("");
+  const pickedRef = useRef(picked);
+  // Where a Shift selection starts: the message clicked last without Shift.
+  const anchorRef = useRef("");
   const readingRef = useRef(false);
   const wideRef = useRef(false);
   const deletingRef = useRef(deleting);
@@ -240,6 +294,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   wideRef.current = wide;
   readingRef.current = reading;
   selectedRef.current = selected;
+  pickedRef.current = picked;
   deletingRef.current = deleting;
 
   // A new search starts again from the first page.
@@ -254,9 +309,11 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     return () => clearTimeout(handle);
   }, [search, scroller]);
 
-  // A notification's message shows whatever the search was.
+  // A notification's message shows whatever the search was, and alone.
   useEffect(() => {
     if (!target) return;
+    setPicked(noKeys);
+    anchorRef.current = "";
     shownQuery.current = "";
     setSearch("");
     setQuery("");
@@ -379,6 +436,17 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     }
   }, [page, selected]);
 
+  // Messages that went away leave the selection.
+  useEffect(() => {
+    if (!page || picked.size === 0) return;
+    const present = new Set(page.messages.map(keyOf));
+    const kept = [...picked].filter((k) => present.has(k));
+    if (kept.length === picked.size) return;
+    setPicked(kept.length > 1 ? new Set(kept) : noKeys);
+    // The cursor stays on a message still selected, and one left is simply selected.
+    if (kept.length === 1 || (kept.length > 1 && !present.has(selectedRef.current))) setSelected(kept[0]!);
+  }, [page, picked]);
+
   // Loads more when the end of the list comes near.
   const hasMore = page?.hasMore ?? false;
   const count = messages.length;
@@ -408,15 +476,113 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   );
 
   const selectMessage = useCallback(
-    (m: Message, focus: boolean) => {
+    (m: Message, focus: boolean, how: SelectHow = "only") => {
       const k = keyOf(m);
-      setSelected(k);
-      setReading(true);
-      markReadNow(m);
-      if (focus && wideRef.current) setFocusKey(k);
+      if (how === "only") {
+        anchorRef.current = k;
+        setPicked(noKeys);
+        setSelected(k);
+        setReading(true);
+        markReadNow(m);
+        if (focus && wideRef.current) setFocusKey(k);
+        return;
+      }
+      const msgs = messagesRef.current;
+      let next: Set<string>;
+      if (how === "toggle") {
+        const cur = selectedRef.current;
+        next = new Set(pickedRef.current.size > 0 ? pickedRef.current : cur ? [cur] : []);
+        if (next.has(k)) next.delete(k);
+        else next.add(k);
+        anchorRef.current = k;
+      } else {
+        const to = msgs.findIndex((x) => keyOf(x) === k);
+        // Without an anchor, the selection starts at the message selected, and stays anchored there.
+        anchorRef.current ||= selectedRef.current;
+        let from = msgs.findIndex((x) => keyOf(x) === anchorRef.current);
+        if (from < 0) {
+          from = to;
+          anchorRef.current = k;
+        }
+        next = new Set(msgs.slice(Math.min(from, to), Math.max(from, to) + 1).map(keyOf));
+      }
+      if (focus) setFocusKey(k);
+      if (next.size > 1) {
+        setPicked(next);
+        setSelected(k);
+        if (!wideRef.current) setReading(false);
+        return;
+      }
+      // One left: it is simply selected, and read where the pane shows it.
+      setPicked(noKeys);
+      const only = msgs.find((x) => next.has(keyOf(x)));
+      setSelected(only ? keyOf(only) : "");
+      setReading(wideRef.current && !!only);
+      if (only && wideRef.current) markReadNow(only);
     },
     [markReadNow],
   );
+
+  const onRowSelect = useCallback((m: Message, how: SelectHow) => selectMessage(m, true, how), [selectMessage]);
+
+  const clearPicked = useCallback(() => setPicked(noKeys), []);
+
+  const pickedMessages = () => messagesRef.current.filter((m) => pickedRef.current.has(keyOf(m)));
+
+  const bulkRead = useCallback(() => {
+    const unread = messagesRef.current.filter((m) => pickedRef.current.has(keyOf(m)) && !m.read);
+    if (unread.length === 0) return;
+    const keys = unread.map(keyOf);
+    setReadNow((s) => new Set([...s, ...keys]));
+    const byServer = new Map<number, number[]>();
+    for (const m of unread) byServer.set(m.serverId, [...(byServer.get(m.serverId) ?? []), m.id]);
+    for (const [server, ids] of byServer) {
+      void Desktop.markRead(server, ids).catch((err) => {
+        setReadNow((s) => {
+          const n = new Set(s);
+          for (const id of ids) n.delete(keyOf({ serverId: server, id }));
+          return n;
+        });
+        onError(errorText(err));
+      });
+    }
+  }, [onError]);
+
+  const bulkDelete = useCallback(() => {
+    const msgs = pickedMessages();
+    if (msgs.length === 0) return;
+    void (async () => {
+      const yes = await confirm({
+        title: t.deleteSelectedTitle(msgs.length),
+        message: t.deleteSelectedText,
+        confirmLabel: t.delete,
+        cancelLabel: t.cancel,
+        destructive: true,
+      });
+      if (!yes) return;
+      const keys = new Set(msgs.map(keyOf));
+      // The cursor moves to the message after the selection, or else before it.
+      // By key: a refresh while the question was open replaced the messages.
+      const listNow = messagesRef.current;
+      const last = listNow.reduce((at, m, i) => (keys.has(keyOf(m)) ? i : at), -1);
+      const rest = (m: Message) => !keys.has(keyOf(m));
+      const next = listNow.slice(last + 1).find(rest) ?? listNow.slice(0, last).reverse().find(rest);
+      setPicked(noKeys);
+      setSelected(next ? keyOf(next) : "");
+      if (next) setFocusKey(keyOf(next));
+      else setReading(false);
+      setDeleting((s) => new Set([...s, ...keys]));
+      Desktop.deleteMessages(msgs.map((m) => ({ serverId: m.serverId, id: m.id })))
+        .catch((err) => onError(t.couldNotDelete(errorText(err))))
+        .finally(() =>
+          setDeleting((s) => {
+            const n = new Set(s);
+            for (const k of keys) n.delete(k);
+            return n;
+          }),
+        );
+    })();
+  }, [onError, t]);
 
   const onDelete = useCallback(
     (m: Message) => {
@@ -499,6 +665,11 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       if (!inPage && !bare) return;
 
       if (e.key === "Escape") {
+        if (pickedRef.current.size > 0) {
+          e.preventDefault();
+          setPicked(noKeys);
+          return;
+        }
         if (!wideRef.current && readingRef.current) {
           e.preventDefault();
           setReading(false);
@@ -515,8 +686,17 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
 
       const msgs = messagesRef.current;
       const current = () => msgs.find((m) => keyOf(m) === selectedRef.current);
+      const selectAll = (isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a";
+      if (selectAll && (bare || targetEl.closest(".msg-list-pane"))) {
+        e.preventDefault();
+        if (msgs.length > 1) {
+          setPicked(new Set(msgs.map(keyOf)));
+          if (!wideRef.current) setReading(false);
+        }
+        return;
+      }
       if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
-        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
         if (msgs.length === 0) return;
         e.preventDefault();
         const i = selectedRef.current ? msgs.findIndex((m) => keyOf(m) === selectedRef.current) : -1;
@@ -526,12 +706,17 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
         else if (e.key === "ArrowDown") n = i < 0 ? 0 : Math.min(msgs.length - 1, i + 1);
         else n = i < 0 ? msgs.length - 1 : Math.max(0, i - 1);
         const m = msgs[n];
-        if (m) selectMessage(m, true);
+        if (m) selectMessage(m, true, e.shiftKey ? "range" : "only");
         return;
       }
       const macDelete = isMac && e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key === "Backspace";
       if (e.key === "Delete" || macDelete) {
         if (e.key === "Delete" && (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)) return;
+        if (pickedRef.current.size > 1) {
+          e.preventDefault();
+          bulkDelete();
+          return;
+        }
         const m = current();
         if (!m) return;
         e.preventDefault();
@@ -548,7 +733,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [focusSearch, onDelete, pageEl, selectMessage]);
+  }, [bulkDelete, focusSearch, onDelete, pageEl, selectMessage]);
 
   const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
@@ -571,8 +756,10 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const unreadCount = scopeApp ? scopeApp.unread : server ? server.unread : state.unread;
   const subtitle = unreadCount > 0 ? `${t.unreadCount(unreadCount)} · ${scopeLine}` : scopeLine;
   const scoped = server ? [server] : state.servers;
-  const showList = wide || !reading;
-  const showReading = wide || reading;
+  const multi = picked.size > 1;
+  // Several messages selected keep a narrow window on the list, with their bar.
+  const showList = wide || !reading || multi;
+  const showReading = wide || (reading && !multi);
   const showBanners = historical || troubled(scoped);
   const selectedMsg = messages.find((m) => keyOf(m) === selected);
   const selectedServer = selectedMsg ? findServer(state, selectedMsg.serverId) : undefined;
@@ -644,6 +831,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
           <div className={"msg-split" + (wide ? " is-wide" : "")}>
             {showList && (
               <div className="msg-list-pane">
+                {multi && !wide && (
+                  <SelectionActions compact count={picked.size} onRead={bulkRead} onDelete={bulkDelete} onClear={clearPicked} />
+                )}
                 {showBanners && (
                   <div className="msg-banners">
                     <ServerBanners servers={scoped} onRelogin={onRelogin} />
@@ -685,6 +875,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                         ref={setList}
                         role="listbox"
                         aria-label={title}
+                        aria-multiselectable
                         tabIndex={cursorShown ? -1 : 0}
                         className="msg-list"
                         style={{ height: virtualizer.getTotalSize() }}>
@@ -701,11 +892,14 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                                 serverName={state.servers.length > 1 && serverId === 0 ? sv?.name : undefined}
                                 highlighted={highlight === k}
                                 deleting={deleting.has(k)}
-                                selected={selected === k}
+                                selected={multi ? picked.has(k) : selected === k}
                                 unread={!m.read && !readNow.has(k)}
                                 tabIndex={k === cursor ? 0 : -1}
-                                onSelect={(message) => selectMessage(message, true)}
+                                bulkCount={multi && picked.has(k) ? picked.size : 0}
+                                onSelect={onRowSelect}
                                 onDelete={onDelete}
+                                onBulkRead={bulkRead}
+                                onBulkDelete={bulkDelete}
                               />
                             </div>
                           );
@@ -723,7 +917,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
             )}
             {showReading && (
               <div className="msg-read-pane">
-                {selectedMsg ? (
+                {multi ? (
+                  <SelectionActions count={picked.size} compact={false} onRead={bulkRead} onDelete={bulkDelete} onClear={clearPicked} />
+                ) : selectedMsg ? (
                   <MessageView
                     key={keyOf(selectedMsg)}
                     msg={selectedMsg}
@@ -734,7 +930,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                   />
                 ) : (
                   <div className="msg-read-empty">
-                    <EmptyState icon={<InboxIcon size={40} />} title={t.selectMessage} headingLevel={2} />
+                    <EmptyState icon={<InboxIcon size={40} />} title={t.selectMessage} description={t.selectHint(isMac)} headingLevel={2} />
                   </div>
                 )}
               </div>

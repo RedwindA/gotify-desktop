@@ -52,7 +52,21 @@ func buildToastXML(n Notification) string {
 	if body != "" {
 		fmt.Fprintf(&sb, `<text>%s</text>`, xmlEscape(body))
 	}
-	sb.WriteString(`</binding></visual>` + audio + `</toast>`)
+	sb.WriteString(`</binding></visual>` + audio)
+	if len(n.Actions) > 0 {
+		sb.WriteString(`<actions>`)
+		for _, a := range n.Actions {
+			// Marking read needs no window. Opening a link activates in the
+			// foreground, which lets the browser come to the front.
+			activation := "background"
+			if a.ID == ActionOpen {
+				activation = "foreground"
+			}
+			fmt.Fprintf(&sb, `<action content="%s" arguments="%s" activationType="%s"/>`, xmlEscape(a.Label), xmlEscape(ActionArgs(n.ID, a.ID)), activation)
+		}
+		sb.WriteString(`</actions>`)
+	}
+	sb.WriteString(`</toast>`)
 	return sb.String()
 }
 

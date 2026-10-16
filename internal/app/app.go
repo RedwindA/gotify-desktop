@@ -3,6 +3,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,7 +100,10 @@ type ServerInput struct {
 }
 
 type Activation struct {
-	Kind      notify.Kind
+	Kind notify.Kind
+	// Action is the button chosen (notify.ActionRead, notify.ActionOpen), or ""
+	// for a click on the notification itself.
+	Action    string
 	ServerID  int64
 	AppID     uint
 	MessageID uint
@@ -134,6 +138,8 @@ type App struct {
 	refreshStop   chan struct{}
 	refreshDone   chan struct{}
 	refreshFlags  atomic.Uint32
+	pruneWake     chan struct{}
+	pruneDone     chan struct{}
 	metadataDirty atomic.Bool
 	appCache      map[int64][]AppInfo
 }
@@ -146,7 +152,8 @@ func New(opts Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{opts: opts, st: st, servers: map[int64]*runtime{}, refresh: make(chan struct{}, 1), refreshStop: make(chan struct{}), refreshDone: make(chan struct{})}
+	a := &App{opts: opts, st: st, servers: map[int64]*runtime{}, refresh: make(chan struct{}, 1), refreshStop: make(chan struct{}), refreshDone: make(chan struct{}),
+		pruneWake: make(chan struct{}, 1), pruneDone: make(chan struct{})}
 	a.metadataDirty.Store(true)
 	s := a.loadSettings()
 	a.settings.Store(&s)
@@ -158,6 +165,7 @@ func New(opts Options) (*App, error) {
 		return nil, err
 	}
 	go a.refreshLoop()
+	go a.pruneLoop()
 	for _, sv := range servers {
 		a.startServer(sv)
 	}
@@ -184,6 +192,7 @@ func (a *App) Close() {
 	}
 	close(a.refreshStop)
 	<-a.refreshDone
+	<-a.pruneDone
 	a.disp.Close()
 	a.st.Close()
 }
@@ -251,8 +260,11 @@ func (a *App) sink(ev conn.Event) {
 	if ev.Kind == conn.EventMessages {
 		a.disp.Handle(ev)
 	}
+	if ev.Kind == conn.EventRemoved {
+		go a.removeNotifications(ev.ServerID, ev.Removed)
+	}
 	flag := uint32(1)
-	if ev.Kind == conn.EventMessages {
+	if ev.Kind == conn.EventMessages || ev.Kind == conn.EventRemoved {
 		flag = 2
 	}
 	a.refreshFlags.Or(flag)
@@ -282,6 +294,48 @@ func (a *App) refreshLoop() {
 			a.rebuild(flags&2 != 0)
 			a.changed()
 		}
+	}
+}
+
+// pruneEvery is how often messages past Settings.KeepDays are deleted.
+const pruneEvery = 6 * time.Hour
+
+func (a *App) pruneLoop() {
+	defer close(a.pruneDone)
+	t := time.NewTicker(pruneEvery)
+	defer t.Stop()
+	for {
+		a.prune()
+		select {
+		case <-a.refreshStop:
+			return
+		case <-t.C:
+		case <-a.pruneWake:
+		}
+	}
+}
+
+// prune deletes the messages older than the settings keep them.
+func (a *App) prune() {
+	days := a.Settings().KeepDays
+	if days <= 0 {
+		return
+	}
+	n, err := a.st.Prune(time.Now().AddDate(0, 0, -days))
+	if err != nil {
+		log.Printf("prune messages: %v", err)
+		return
+	}
+	if n > 0 {
+		a.rebuild(true)
+		a.changed()
+	}
+}
+
+// removeNotifications takes the notifications of messages off the screen and out of the notification center.
+func (a *App) removeNotifications(serverID int64, ids []uint) {
+	for _, id := range ids {
+		a.opts.Notifier.Remove(fmt.Sprintf("s%d-m%d", serverID, id))
 	}
 }
 
@@ -647,27 +701,95 @@ func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
 	return nil
 }
 
-// DeleteMessage deletes on the server first and keeps the local copy when that fails.
-func (a *App) DeleteMessage(ctx context.Context, serverID int64, id uint) error {
+// clientOf returns a client for a server with its token.
+func (a *App) clientOf(serverID int64) (*gotify.Client, error) {
 	v, err := a.runtimeOf(serverID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	token, err := a.opts.Tokens.Get(serverID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	client, err := a.clientFor(v.sv, token)
+	return a.clientFor(v.sv, token)
+}
+
+// DeleteMessage deletes on the server first and keeps the local copy when that fails.
+func (a *App) DeleteMessage(ctx context.Context, serverID int64, id uint) error {
+	return a.DeleteMessages(ctx, serverID, []uint{id})
+}
+
+// deleteParallel is how many deletions DeleteMessages sends to a server at once.
+const deleteParallel = 4
+
+// DeleteMessages deletes messages on the server and then here, a few at a
+// time. Those the server could not delete stay; the first error is returned.
+func (a *App) DeleteMessages(ctx context.Context, serverID int64, ids []uint) error {
+	client, err := a.clientOf(serverID)
 	if err != nil {
 		return err
 	}
-	if err := client.DeleteMessage(ctx, id); err != nil {
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		deleted []uint
+		first   error
+	)
+	slots := make(chan struct{}, deleteParallel)
+	for _, id := range ids {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer wg.Done()
+			err := client.DeleteMessage(ctx, id)
+			<-slots
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				first = cmp.Or(first, err)
+				return
+			}
+			deleted = append(deleted, id)
+		}()
+	}
+	wg.Wait()
+	if len(deleted) > 0 {
+		if err := a.st.DeleteMessage(serverID, deleted...); err != nil {
+			return err
+		}
+		go a.removeNotifications(serverID, deleted)
+		a.rebuild(true)
+		a.changed()
+	}
+	return first
+}
+
+// ClearMessages deletes every message of an app, or of the server when appID
+// is 0, on the server and then here.
+func (a *App) ClearMessages(ctx context.Context, serverID int64, appID uint) error {
+	client, err := a.clientOf(serverID)
+	if err != nil {
 		return err
 	}
-	if err := a.st.DeleteMessage(serverID, id); err != nil {
+	// Only the messages stored now are removed here, as ids need not arrive in
+	// order. One stored meanwhile stays; if the server deleted it too, the next
+	// check for deleted messages removes it.
+	ids, err := a.st.AppMessageIDs(serverID, appID)
+	if err != nil {
 		return err
 	}
-	a.opts.Notifier.Remove(fmt.Sprintf("s%d-m%d", serverID, id))
+	if appID == 0 {
+		err = client.DeleteAllMessages(ctx)
+	} else {
+		err = client.DeleteAppMessages(ctx, appID)
+	}
+	if err != nil {
+		return err
+	}
+	if err := a.st.DeleteMessage(serverID, ids...); err != nil {
+		return err
+	}
+	go a.removeNotifications(serverID, ids)
 	a.rebuild(true)
 	a.changed()
 	return nil
@@ -686,9 +808,11 @@ func (a *App) MarkRead(serverID int64, ids ...uint) error {
 }
 
 func (a *App) MarkAllRead(serverID int64, appID uint) error {
-	if err := a.st.MarkAllRead(serverID, appID); err != nil {
+	ids, err := a.st.MarkAllRead(serverID, appID)
+	if err != nil {
 		return err
 	}
+	go a.removeNotifications(serverID, ids)
 	a.rebuild(true)
 	a.changed()
 	return nil
@@ -729,7 +853,13 @@ func (a *App) SetSettings(s notify.Settings) error {
 	if err := a.st.SetSetting(settingsKey, string(b)); err != nil {
 		return err
 	}
-	a.settings.Store(&s)
+	old := a.settings.Swap(&s)
+	if s.KeepDays != old.KeepDays {
+		select {
+		case a.pruneWake <- struct{}{}:
+		default:
+		}
+	}
 	i18n.SetPreference(s.Language)
 	a.rebuild(false)
 	a.changed()
@@ -758,17 +888,25 @@ func (a *App) SetAppPref(serverID int64, appID uint, p store.AppPref) error {
 	return nil
 }
 
-// HandleActivation resolves a clicked notification and marks its message read.
+// HandleActivation resolves a clicked notification, or a button of one, and
+// marks its messages read: a message's on a click, and on its buttons;
+// those of a summary on Mark all as read.
 func (a *App) HandleActivation(id string) Activation {
+	id, action := notify.SplitActivation(id)
 	serverID, appID, msgID, kind := notify.ParseID(id)
-	act := Activation{Kind: kind, ServerID: serverID, AppID: appID, MessageID: msgID}
-	if kind == notify.KindMessage {
+	act := Activation{Kind: kind, Action: action, ServerID: serverID, AppID: appID, MessageID: msgID}
+	switch {
+	case kind == notify.KindMessage:
 		if msgs, err := a.st.Messages(store.MessageQuery{ServerID: serverID, ID: msgID, Limit: 1}); err == nil && len(msgs) == 1 {
 			act.AppID = msgs[0].AppID
 			act.ClickURL = notify.ClickURL(msgs[0].Extras)
 		}
 		if err := a.MarkRead(serverID, msgID); err != nil {
 			log.Printf("mark activated message read: %v", err)
+		}
+	case action == notify.ActionRead && (kind == notify.KindBurst || kind == notify.KindMissed):
+		if err := a.MarkAllRead(serverID, appID); err != nil {
+			log.Printf("mark summarized messages read: %v", err)
 		}
 	}
 	return act

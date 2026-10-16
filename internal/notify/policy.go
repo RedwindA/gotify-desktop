@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -31,7 +32,9 @@ type Settings struct {
 	// Language is the language the app shows: "en", "zh-CN", or "" to follow the system.
 	Language string
 	// Theme is the appearance of the window: "light", "dark", or "" to follow the system.
-	Theme              string
+	Theme string
+	// KeepDays is how many days messages are kept; 0 keeps them forever.
+	KeepDays           int
 	HighBypassesDND    bool
 	BurstWindow        time.Duration
 	BurstMax           int
@@ -230,6 +233,7 @@ func individual(serverID int64, m gotify.Message, level Level, apps map[uint]sto
 	if title == "" {
 		title = "Gotify"
 	}
+	actions := messageActions(ClickURL(m.Extras) != "")
 	return Planned{
 		Notification: Notification{
 			ID:      fmt.Sprintf("s%d-m%d", serverID, m.ID),
@@ -238,12 +242,41 @@ func individual(serverID int64, m gotify.Message, level Level, apps map[uint]sto
 			AppName: name,
 			Group:   fmt.Sprintf("s%d-a%d", serverID, m.AppID),
 			Level:   level,
+			Actions: actions,
 		},
 		ImageURL:  BigImageURL(m.Extras),
 		ServerID:  serverID,
 		AppID:     m.AppID,
 		MessageID: m.ID,
 	}
+}
+
+// messageActions are the buttons of a message's notification.
+func messageActions(link bool) []Action { return messageActionsIn(i18n.Current(), link) }
+
+func messageActionsIn(lang i18n.Lang, link bool) []Action {
+	actions := []Action{{ID: ActionRead, Label: i18n.In(lang, "Mark as read")}}
+	if link {
+		actions = append(actions, Action{ID: ActionOpen, Label: i18n.In(lang, "Open link")})
+	}
+	return actions
+}
+
+// summaryActions are the buttons of a summary's notification.
+func summaryActions() []Action { return summaryActionsIn(i18n.Current()) }
+
+func summaryActionsIn(lang i18n.Lang) []Action {
+	return []Action{{ID: ActionRead, Label: i18n.In(lang, "Mark all as read")}}
+}
+
+// ActionSets are the sets of buttons notifications have, in every language:
+// notifications from an earlier run may be in another one.
+func ActionSets() [][]Action {
+	var sets [][]Action
+	for _, lang := range i18n.Langs {
+		sets = append(sets, messageActionsIn(lang, false), messageActionsIn(lang, true), summaryActionsIn(lang))
+	}
+	return sets
 }
 
 func missedSummary(serverID int64, msgs []gotify.Message, apps map[uint]store.App) Planned {
@@ -260,11 +293,12 @@ func missedSummary(serverID int64, msgs []gotify.Message, apps map[uint]store.Ap
 	}
 	return Planned{
 		Notification: Notification{
-			ID:    fmt.Sprintf("s%d-missed", serverID),
-			Title: i18n.T("%d missed messages", len(msgs)),
-			Body:  strings.Join(lines, "\n"),
-			Group: fmt.Sprintf("s%d", serverID),
-			Level: level,
+			ID:      fmt.Sprintf("s%d-missed", serverID),
+			Title:   i18n.T("%d missed messages", len(msgs)),
+			Body:    strings.Join(lines, "\n"),
+			Group:   fmt.Sprintf("s%d", serverID),
+			Level:   level,
+			Actions: summaryActions(),
 		},
 		ServerID:   serverID,
 		MessageIDs: msgIDs,
@@ -304,6 +338,7 @@ func burstSummary(key burstKey, entries []burstEntry, apps map[uint]store.App) P
 			AppName: name,
 			Group:   fmt.Sprintf("s%d-a%d", key.server, key.app),
 			Level:   level,
+			Actions: summaryActions(),
 		},
 		ServerID:   key.server,
 		AppID:      key.app,

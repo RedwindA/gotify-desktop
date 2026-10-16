@@ -51,9 +51,15 @@ func Current() Lang {
 	return Resolve(p)
 }
 
+// Langs are the languages the app is translated to.
+var Langs = []Lang{English, Chinese}
+
 // T translates text, a fmt format, to the current language and formats it with args.
-func T(text string, args ...any) string {
-	if Current() == Chinese {
+func T(text string, args ...any) string { return In(Current(), text, args...) }
+
+// In translates text, a fmt format, to lang and formats it with args.
+func In(lang Lang, text string, args ...any) string {
+	if lang == Chinese {
 		if zh, ok := chinese[text]; ok {
 			text = zh
 		}
@@ -100,6 +106,9 @@ var chinese = map[string]string{
 	"%d missed messages":      "错过了 %d 条消息",
 	"%d new messages from %s": "%[2]s 发来 %[1]d 条新消息",
 	"Notifications work.":     "通知工作正常。",
+	"Mark as read":            "标为已读",
+	"Mark all as read":        "全部标为已读",
+	"Open link":               "打开链接",
 
 	// Errors.
 	"Wrong username or password": "用户名或密码错误",

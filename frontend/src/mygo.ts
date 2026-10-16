@@ -168,6 +168,8 @@ export interface Settings {
   language: Language;
   /** Theme is the appearance the user chose; "" follows the system. */
   theme: Theme;
+  /** KeepDays is how many days messages are kept here; 0 keeps them forever. */
+  keepDays: number;
 }
 
 /** State is everything the page shows besides messages. */
@@ -208,6 +210,13 @@ export const Desktop = {
     return call("Desktop.CheckForUpdates");
   },
   /**
+   * ClearMessages deletes every message of an app, or of a server when appID is
+   * 0, on the server and here.
+   */
+  clearMessages(serverID: number, appID: number): Promise<void> {
+    return call("Desktop.ClearMessages", serverID, appID);
+  },
+  /**
    * Confirm asks a question in a native message box. It answers "unavailable"
    * when there is none, for the page to ask in its own dialog.
    */
@@ -221,6 +230,13 @@ export const Desktop = {
   /** DeleteMessage deletes a message on its server and here. */
   deleteMessage(serverID: number, id: number): Promise<void> {
     return call("Desktop.DeleteMessage", serverID, id);
+  },
+  /**
+   * DeleteMessages deletes messages on their servers and here. Those that could
+   * not be deleted stay, and the first error is returned.
+   */
+  deleteMessages(refs: MessageRef[]): Promise<void> {
+    return call("Desktop.DeleteMessages", refs);
   },
   /** MarkAllRead marks the selected app, server or all servers read. */
   markAllRead(serverID: number, appID: number): Promise<void> {

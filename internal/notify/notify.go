@@ -25,6 +25,32 @@ type Notification struct {
 	ImagePath string
 	Group     string
 	Level     Level
+	// Actions are the notification's buttons.
+	Actions []Action
+}
+
+// Action is a button of a notification. Choosing it activates the notification
+// as ActionArgs(id, action.ID).
+type Action struct {
+	ID    string
+	Label string
+}
+
+const (
+	// ActionRead marks the notification's messages read.
+	ActionRead = "read"
+	// ActionOpen opens the message's link.
+	ActionOpen = "open"
+)
+
+// ActionArgs is what activating the action of a notification reports.
+func ActionArgs(id, action string) string { return id + "#" + action }
+
+// SplitActivation separates what an activation reports into the notification's
+// id and the action chosen, "" for a click on the notification itself.
+func SplitActivation(s string) (id, action string) {
+	id, action, _ = strings.Cut(s, "#")
+	return id, action
 }
 
 type Notifier interface {

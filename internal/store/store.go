@@ -89,7 +89,8 @@ CREATE TABLE deleted_messages(
 	id INTEGER NOT NULL,
 	PRIMARY KEY(server_id, id)
 );
-`}, {sql: `ALTER TABLE server_state ADD COLUMN import_floor INTEGER NOT NULL DEFAULT 0;`}}
+`}, {sql: `ALTER TABLE server_state ADD COLUMN import_floor INTEGER NOT NULL DEFAULT 0;`},
+	{sql: `ALTER TABLE server_state ADD COLUMN pruned_before INTEGER NOT NULL DEFAULT 0;`}}
 
 type Store struct{ db *sql.DB }
 
@@ -322,8 +323,11 @@ func (s *Store) LastSeen(serverID int64) (uint, bool, error) {
 	return id, init, err
 }
 
-// insertMessages stores msgs that are new and not deleted, and returns them with the highest id seen.
-func insertMessages(tx *sql.Tx, serverID int64, msgs []gotify.Message) (inserted []gotify.Message, maxID uint, err error) {
+// insertMessages stores msgs that are new and not deleted, and returns them
+// with the highest id seen. With pruned, it also leaves out those dated before
+// the server's last prune: a catch-up may hand them in again. The cutoff is
+// read here, in the transaction, as Prune may move it at any time.
+func insertMessages(tx *sql.Tx, serverID int64, msgs []gotify.Message, pruned bool) (inserted []gotify.Message, maxID uint, err error) {
 	for _, m := range msgs {
 		maxID = max(maxID, m.ID)
 		extras := ""
@@ -334,9 +338,14 @@ func insertMessages(tx *sql.Tx, serverID int64, msgs []gotify.Message) (inserted
 			}
 			extras = string(b)
 		}
-		res, err := tx.Exec(`INSERT OR IGNORE INTO messages(server_id,id,app_id,title,message,priority,extras,date)
-SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_messages WHERE server_id=? AND id=?)`,
-			serverID, m.ID, m.AppID, m.Title, m.Message, m.Priority, extras, m.Date.UnixMilli(), serverID, m.ID)
+		query := `INSERT OR IGNORE INTO messages(server_id,id,app_id,title,message,priority,extras,date)
+SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_messages WHERE server_id=? AND id=?)`
+		args := []any{serverID, m.ID, m.AppID, m.Title, m.Message, m.Priority, extras, m.Date.UnixMilli(), serverID, m.ID}
+		if pruned {
+			query += ` AND ? >= coalesce((SELECT pruned_before FROM server_state WHERE server_id=?), 0)`
+			args = append(args, m.Date.UnixMilli(), serverID)
+		}
+		res, err := tx.Exec(query, args...)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -351,11 +360,22 @@ SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM deleted_messages WHERE se
 // SaveMessages is the dedup point: it returns only newly inserted messages, ascending by id,
 // and advances last_seen_id in the same transaction.
 func (s *Store) SaveMessages(serverID int64, msgs []gotify.Message) ([]gotify.Message, error) {
+	return s.save(serverID, msgs, false)
+}
+
+// SaveCaughtUp is SaveMessages for a catch-up, which also leaves out the
+// messages dated before the last prune. A live message is always new, even
+// when the server's clock dated it long ago.
+func (s *Store) SaveCaughtUp(serverID int64, msgs []gotify.Message) ([]gotify.Message, error) {
+	return s.save(serverID, msgs, true)
+}
+
+func (s *Store) save(serverID int64, msgs []gotify.Message, pruned bool) ([]gotify.Message, error) {
 	var inserted []gotify.Message
 	err := s.tx(func(tx *sql.Tx) error {
 		var maxID uint
 		var err error
-		if inserted, maxID, err = insertMessages(tx, serverID, msgs); err != nil {
+		if inserted, maxID, err = insertMessages(tx, serverID, msgs, pruned); err != nil {
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized) VALUES(?,?,1)
@@ -375,10 +395,10 @@ func (s *Store) SaveInitialImport(serverID int64, live, history []gotify.Message
 	err = s.tx(func(tx *sql.Tx) error {
 		var maxLive, maxHist uint
 		var err error
-		if insertedLive, maxLive, err = insertMessages(tx, serverID, live); err != nil {
+		if insertedLive, maxLive, err = insertMessages(tx, serverID, live, false); err != nil {
 			return err
 		}
-		if insertedHistory, maxHist, err = insertMessages(tx, serverID, history); err != nil {
+		if insertedHistory, maxHist, err = insertMessages(tx, serverID, history, false); err != nil {
 			return err
 		}
 		_, err = tx.Exec(`INSERT INTO server_state(server_id,last_seen_id,initialized,import_floor) VALUES(?,?,1,?)
@@ -490,15 +510,80 @@ func (s *Store) Messages(q MessageQuery) ([]StoredMessage, error) {
 	return out, rows.Err()
 }
 
-// DeleteMessage removes a message and remembers its id, so a late copy from the stream or a catch-up is not stored again.
-func (s *Store) DeleteMessage(serverID int64, id uint) error {
+// DeleteMessage removes messages and remembers their ids, so a late copy from the stream or a catch-up is not stored again.
+func (s *Store) DeleteMessage(serverID int64, ids ...uint) error {
 	return s.tx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM messages WHERE server_id=? AND id=?`, serverID, id); err != nil {
+		for _, id := range ids {
+			if _, err := tx.Exec(`DELETE FROM messages WHERE server_id=? AND id=?`, serverID, id); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO deleted_messages(server_id,id) VALUES(?,?)`, serverID, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// MessageIDs returns the ids of a server's messages, ascending.
+func (s *Store) MessageIDs(serverID int64) ([]uint, error) {
+	return txIDs(s.db, `SELECT id FROM messages WHERE server_id=? ORDER BY id`, serverID)
+}
+
+// txIDs returns the ids a query selects, in a transaction or not.
+func txIDs(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, query string, args ...any) ([]uint, error) {
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uint
+	for rows.Next() {
+		var id uint
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// RemoveMessages deletes messages the server no longer has. Like
+// DeleteMessage, it remembers their ids: a copy may still wait to be stored.
+func (s *Store) RemoveMessages(serverID int64, ids []uint) error {
+	return s.DeleteMessage(serverID, ids...)
+}
+
+// AppMessageIDs returns the ids of a server's messages, only those of appID
+// when it is non-zero, ascending.
+func (s *Store) AppMessageIDs(serverID int64, appID uint) ([]uint, error) {
+	if appID == 0 {
+		return s.MessageIDs(serverID)
+	}
+	return txIDs(s.db, `SELECT id FROM messages WHERE server_id=? AND app_id=? ORDER BY id`, serverID, appID)
+}
+
+// Prune deletes the messages dated before before and returns how many. It
+// records the cutoff, below which a catch-up stores nothing (SaveCaughtUp):
+// the server still has them. Dates rather than ids decide, as dates come
+// from the server's clock and need not follow the ids.
+func (s *Store) Prune(before time.Time) (int64, error) {
+	var n int64
+	cutoff := before.UnixMilli()
+	err := s.tx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE server_state SET pruned_before=max(pruned_before,?)`, cutoff); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`INSERT OR IGNORE INTO deleted_messages(server_id,id) VALUES(?,?)`, serverID, id)
+		res, err := tx.Exec(`DELETE FROM messages WHERE date<?`, cutoff)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
 		return err
 	})
+	return n, err
 }
 
 func (s *Store) MarkRead(serverID int64, ids ...uint) error {
@@ -512,14 +597,23 @@ func (s *Store) MarkRead(serverID int64, ids ...uint) error {
 	})
 }
 
-// MarkAllRead marks a server's messages read, only those of appID when it is non-zero.
-func (s *Store) MarkAllRead(serverID int64, appID uint) error {
-	if appID == 0 {
-		_, err := s.db.Exec(`UPDATE messages SET read=1 WHERE server_id=? AND read=0`, serverID)
-		return err
+// MarkAllRead marks a server's messages read, only those of appID when it is
+// non-zero, and returns the ids of those that were unread.
+func (s *Store) MarkAllRead(serverID int64, appID uint) ([]uint, error) {
+	where, args := `server_id=? AND read=0`, []any{serverID}
+	if appID != 0 {
+		where, args = where+` AND app_id=?`, append(args, appID)
 	}
-	_, err := s.db.Exec(`UPDATE messages SET read=1 WHERE server_id=? AND app_id=? AND read=0`, serverID, appID)
-	return err
+	var ids []uint
+	err := s.tx(func(tx *sql.Tx) error {
+		var err error
+		if ids, err = txIDs(tx, `SELECT id FROM messages WHERE `+where+` ORDER BY id`, args...); err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE messages SET read=1 WHERE `+where, args...)
+		return err
+	})
+	return ids, err
 }
 
 func (s *Store) UnreadCounts() (map[int64]map[uint]int, error) {

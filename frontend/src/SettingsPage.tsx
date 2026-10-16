@@ -23,6 +23,9 @@ function toMinutes(t: string | undefined): number | null {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
+// The choices of how long messages are kept, in days; 0 is forever.
+const keepChoices = [0, 7, 30, 90, 180, 365];
+
 function tomorrowMorning(): Date {
   const d = new Date();
   d.setDate(d.getDate() + 1);
@@ -201,6 +204,17 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
                   </Text>
                 )}
               </HStack>
+            </Group>
+
+            <Group title={t.history}>
+              <Selector
+                label={t.keepMessages}
+                description={t.keepMessagesText}
+                options={keepChoices.map((d) => ({ value: String(d), label: d === 0 ? t.keepForever : t.keepFor(d) }))}
+                value={String(s.keepDays)}
+                width={240}
+                onChange={(v) => update({ keepDays: Number(v) })}
+              />
             </Group>
 
             <Group title={t.about}>

@@ -26,6 +26,7 @@ import (
 	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/secret"
+	"gotify-desktop/internal/sysproxy"
 )
 
 const (
@@ -51,6 +52,8 @@ var (
 )
 
 func main() {
+	// Images of messages and updates go through the system's proxy too.
+	sysproxy.Install()
 	mygo.App.SetName(appName)
 	// The version is "version" in mygo.json, which mygo build stamps into
 	// the app; the updater compares it with the published one.
@@ -139,9 +142,13 @@ func (c demoController) Test() error {
 	})
 }
 
-func (demoController) HandleActivation(id string) app.Activation {
+func (c demoController) HandleActivation(id string) app.Activation {
+	id, action := notify.SplitActivation(id)
 	serverID, appID, msgID, kind := notify.ParseID(id)
-	return app.Activation{Kind: kind, ServerID: serverID, AppID: appID, MessageID: msgID}
+	if kind == notify.KindMessage {
+		c.MarkRead(serverID, msgID)
+	}
+	return app.Activation{Kind: kind, Action: action, ServerID: serverID, AppID: appID, MessageID: msgID}
 }
 
 func (d *desktop) demo() demoController {
@@ -335,6 +342,9 @@ func (d *desktop) showWindow() {
 
 func (d *desktop) activated(id string) {
 	act := d.ctrl.HandleActivation(id)
+	if act.Action == notify.ActionRead {
+		return
+	}
 	mygo.RunOnMain(func() {
 		if act.ClickURL != "" {
 			go mygo.Shell.OpenExternal(act.ClickURL)

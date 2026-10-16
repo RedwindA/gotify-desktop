@@ -34,12 +34,15 @@ const (
 	EventMessages EventKind = iota
 	EventState
 	EventApps
+	// EventRemoved names the stored messages the server no longer has (Removed).
+	EventRemoved
 )
 
 type Event struct {
 	ServerID int64
 	Kind     EventKind
 	Messages []gotify.Message
+	Removed  []uint
 	CatchUp  bool
 	Silent   bool
 	State    State
@@ -56,6 +59,9 @@ type Config struct {
 	ImportOnFirstConnect int
 	// PageSize is how many messages a catch-up requests at once (100).
 	PageSize int
+	// ReconcileEvery is how often a connected server is checked for messages
+	// deleted elsewhere (10 minutes); every connection checks once at its start.
+	ReconcileEvery time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -69,6 +75,7 @@ func (c Config) withDefaults() Config {
 	def(&c.MinBackoff, time.Second)
 	def(&c.MaxBackoff, 5*time.Minute)
 	def(&c.StableAfter, time.Minute)
+	def(&c.ReconcileEvery, 10*time.Minute)
 	if c.PageSize <= 0 {
 		c.PageSize = pageSize
 	}
@@ -81,11 +88,14 @@ func (c Config) withDefaults() Config {
 type Store interface {
 	LastSeen(serverID int64) (uint, bool, error)
 	SaveMessages(serverID int64, msgs []gotify.Message) ([]gotify.Message, error)
+	SaveCaughtUp(serverID int64, msgs []gotify.Message) ([]gotify.Message, error)
 	SaveInitialImport(serverID int64, live, history []gotify.Message, floor uint) (insertedLive, insertedHistory []gotify.Message, err error)
 	ImportFloor(serverID int64) (uint, error)
 	ReplaceApps(serverID int64, apps []gotify.Application) error
 	Apps(serverID int64) ([]store.App, error)
 	SetAppImageForPath(serverID int64, appID uint, path string, img []byte) error
+	MessageIDs(serverID int64) ([]uint, error)
+	RemoveMessages(serverID int64, ids []uint) error
 }
 
 const (
@@ -93,6 +103,12 @@ const (
 	catchUpOverlap = 20
 	dialTimeout    = 15 * time.Second
 	unknownAppWait = time.Minute
+	// reconcilePageSize is the most the server returns at once.
+	reconcilePageSize = 200
+	// A connection's first check goes this many pages deep; later ones
+	// check the newest page only.
+	reconcileFullPages = 100
+	reconcileTickPages = 1
 )
 
 var (
@@ -351,6 +367,26 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 	if err = s.catchUp(ctx, client, q); err != nil {
 		return connectedAt, err
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTicker(s.cfg.ReconcileEvery)
+		defer t.Stop()
+		pages := reconcileFullPages
+		for {
+			// A failed check waits for the next; the stream notices a dead server.
+			if errors.Is(s.reconcile(ctx, client, pages), gotify.ErrUnauthorized) {
+				cancel(gotify.ErrUnauthorized)
+				return
+			}
+			pages = reconcileTickPages
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -472,6 +508,59 @@ func (s *Supervisor) catchUp(ctx context.Context, client *gotify.Client, q *queu
 	return nil
 }
 
+// reconcile removes the stored messages the server no longer has, deleted in
+// its web UI or by another client: Gotify announces no deletions. It pages
+// through the server's messages, newest first, down to the oldest one stored
+// or at most maxPages deep, and removes the stored ones above that depth that
+// the pages left out.
+func (s *Supervisor) reconcile(ctx context.Context, client *gotify.Client, maxPages int) error {
+	// The ids are read before the pages: a message is stored only after the
+	// server committed it, so a page read afterwards lists it unless it was deleted.
+	local, err := s.st.MessageIDs(s.id)
+	if err != nil || len(local) == 0 {
+		return err
+	}
+	oldest := local[0]
+	have := map[uint]bool{}
+	var cursor, depth uint // the pages hold every message from depth up
+	for pages := 0; ; pages++ {
+		if pages == maxPages {
+			depth = cursor
+			break
+		}
+		page, err := client.Messages(ctx, reconcilePageSize, cursor)
+		if err != nil {
+			return err
+		}
+		for _, m := range page.Messages {
+			have[m.ID] = true
+		}
+		if page.Paging.Next == "" || page.Paging.Since == 0 || (cursor != 0 && page.Paging.Since >= cursor) {
+			depth = 0
+			break
+		}
+		cursor = page.Paging.Since
+		if cursor <= oldest {
+			depth = cursor
+			break
+		}
+	}
+	var gone []uint
+	for _, id := range local {
+		if id >= depth && !have[id] {
+			gone = append(gone, id)
+		}
+	}
+	if len(gone) == 0 {
+		return nil
+	}
+	if err := s.st.RemoveMessages(s.id, gone); err != nil {
+		return err
+	}
+	s.sink(Event{ServerID: s.id, Kind: EventRemoved, Removed: gone})
+	return nil
+}
+
 // syncUnknownApps refreshes the applications when msgs name one that is not known yet.
 func (s *Supervisor) syncUnknownApps(ctx context.Context, client *gotify.Client, msgs []gotify.Message) error {
 	if !s.hasUnknownApp(msgs) {
@@ -493,7 +582,11 @@ func (s *Supervisor) deliver(ctx context.Context, client *gotify.Client, msgs []
 	if err := s.syncUnknownApps(ctx, client, msgs); err != nil {
 		return err
 	}
-	inserted, err := s.st.SaveMessages(s.id, msgs)
+	save := s.st.SaveMessages
+	if catchUp {
+		save = s.st.SaveCaughtUp
+	}
+	inserted, err := save(s.id, msgs)
 	if err != nil {
 		return err
 	}

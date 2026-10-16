@@ -29,7 +29,10 @@ import (
 type Backend interface {
 	Snapshot() *app.Snapshot
 	Messages(q store.MessageQuery) ([]store.StoredMessage, error)
-	DeleteMessage(ctx context.Context, serverID int64, id uint) error
+	// DeleteMessages deletes messages of a server; those it could not delete stay.
+	DeleteMessages(ctx context.Context, serverID int64, ids []uint) error
+	// ClearMessages deletes the messages of an app, or of a server when appID is 0.
+	ClearMessages(ctx context.Context, serverID int64, appID uint) error
 	MarkRead(serverID int64, ids ...uint) error
 	MarkAllRead(serverID int64, appID uint) error
 	AddServer(ctx context.Context, in app.ServerInput) (int64, error)
@@ -191,6 +194,8 @@ type Settings struct {
 	Language Language `json:"language"`
 	// Theme is the appearance the user chose; "" follows the system.
 	Theme Theme `json:"theme"`
+	// KeepDays is how many days messages are kept here; 0 keeps them forever.
+	KeepDays int `json:"keepDays"`
 }
 
 // Theme is a light or dark appearance, or "" for the system's.
@@ -433,7 +438,7 @@ func connState(s conn.State) ConnState {
 }
 
 func settingsOf(s notify.Settings) Settings {
-	out := Settings{DND: s.DND, DNDStart: s.DNDStart, DNDEnd: s.DNDEnd, HighBypassesDND: s.HighBypassesDND, Language: Language(s.Language), Theme: Theme(s.Theme)}
+	out := Settings{DND: s.DND, DNDStart: s.DNDStart, DNDEnd: s.DNDEnd, HighBypassesDND: s.HighBypassesDND, Language: Language(s.Language), Theme: Theme(s.Theme), KeepDays: s.KeepDays}
 	if !s.PausedUntil.IsZero() {
 		t := s.PausedUntil
 		out.PausedUntil = &t
@@ -595,7 +600,37 @@ func (d *Desktop) MarkAllRead(serverID int64, appID uint) error {
 func (d *Desktop) DeleteMessage(ctx context.Context, serverID int64, id uint) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	return explain(d.be.DeleteMessage(ctx, serverID, id))
+	return explain(d.be.DeleteMessages(ctx, serverID, []uint{id}))
+}
+
+// DeleteMessages deletes messages on their servers and here. Those that could
+// not be deleted stay, and the first error is returned.
+func (d *Desktop) DeleteMessages(ctx context.Context, refs []MessageRef) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	var servers []int64
+	ids := map[int64][]uint{}
+	for _, r := range refs {
+		if _, ok := ids[r.ServerID]; !ok {
+			servers = append(servers, r.ServerID)
+		}
+		ids[r.ServerID] = append(ids[r.ServerID], r.ID)
+	}
+	var first error
+	for _, sid := range servers {
+		if err := d.be.DeleteMessages(ctx, sid, ids[sid]); err != nil && first == nil {
+			first = err
+		}
+	}
+	return explain(first)
+}
+
+// ClearMessages deletes every message of an app, or of a server when appID is
+// 0, on the server and here.
+func (d *Desktop) ClearMessages(ctx context.Context, serverID int64, appID uint) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	return explain(d.be.ClearMessages(ctx, serverID, appID))
 }
 
 // AddServer signs in to a server and adds it. It returns the new server's ID.
@@ -708,6 +743,7 @@ func (d *Desktop) SetSettings(seq uint64, s Settings) error {
 	default:
 		cur.Theme = ""
 	}
+	cur.KeepDays = min(max(s.KeepDays, 0), maxKeepDays)
 	cur.PausedUntil = time.Time{}
 	if s.PausedUntil != nil {
 		cur.PausedUntil = *s.PausedUntil
@@ -716,6 +752,9 @@ func (d *Desktop) SetSettings(seq uint64, s Settings) error {
 }
 
 func clampMinutes(m int) int { return min(max(m, 0), 24*60-1) }
+
+// maxKeepDays bounds Settings.KeepDays: ten years.
+const maxKeepDays = 3650
 
 // SetAppPrefs saves the notification preferences of an app.
 func (d *Desktop) SetAppPrefs(serverID int64, appID uint, p AppPrefs) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -483,4 +484,123 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+func (f *fakeNotifier) removedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.removed)
+}
+
+func TestActivationButtonsMarkRead(t *testing.T) {
+	a, fn, _ := newApp(t, &secret.Memory{})
+	sid, err := a.st.AddServer(store.Server{Name: "s", URL: "https://example.invalid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	a.st.SaveMessages(sid, []gotify.Message{{ID: 1, AppID: 1, Date: now}, {ID: 2, AppID: 1, Date: now}, {ID: 3, AppID: 2, Date: now}})
+	unread := func() []uint {
+		var out []uint
+		msgs, _ := a.st.Messages(store.MessageQuery{ServerID: sid})
+		for _, m := range msgs {
+			if !m.Read {
+				out = append(out, m.ID)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	act := a.HandleActivation(notify.ActionArgs(fmt.Sprintf("s%d-m1", sid), notify.ActionRead))
+	if act.Action != notify.ActionRead || act.Kind != notify.KindMessage || !slices.Equal(unread(), []uint{2, 3}) {
+		t.Fatalf("%+v unread %v", act, unread())
+	}
+	a.HandleActivation(notify.ActionArgs(fmt.Sprintf("s%d-a1-burst", sid), notify.ActionRead))
+	if !slices.Equal(unread(), []uint{3}) {
+		t.Fatalf("unread %v", unread())
+	}
+	// A click on a summary itself only shows the messages.
+	a.HandleActivation(fmt.Sprintf("s%d-missed", sid))
+	if !slices.Equal(unread(), []uint{3}) {
+		t.Fatalf("unread %v", unread())
+	}
+	a.HandleActivation(notify.ActionArgs(fmt.Sprintf("s%d-missed", sid), notify.ActionRead))
+	if len(unread()) != 0 {
+		t.Fatalf("unread %v", unread())
+	}
+	eventually(t, "notifications removed", func() bool {
+		removed := fn.removedIDs()
+		return slices.Contains(removed, fmt.Sprintf("s%d-m2", sid)) && slices.Contains(removed, fmt.Sprintf("s%d-m3", sid))
+	})
+}
+
+func TestKeepDaysPrunesOldMessages(t *testing.T) {
+	a, _, _ := newApp(t, &secret.Memory{})
+	sid, _ := a.st.AddServer(store.Server{Name: "s", URL: "https://example.invalid"})
+	now := time.Now()
+	a.st.SaveMessages(sid, []gotify.Message{{ID: 1, AppID: 1, Date: now.AddDate(0, 0, -40)}, {ID: 2, AppID: 1, Date: now.AddDate(0, 0, -2)}})
+	s := a.Settings()
+	s.KeepDays = 30
+	if err := a.SetSettings(s); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "prune", func() bool {
+		ids, _ := a.st.MessageIDs(sid)
+		return slices.Equal(ids, []uint{2})
+	})
+}
+
+func TestClearAndBatchDeleteAgainstRealServer(t *testing.T) {
+	harness.RequireIT(t)
+	srv := harness.StartServer(t)
+	ctx := context.Background()
+	a, _, _ := newApp(t, &secret.Memory{})
+	backup, web := srv.NewApp("Backup"), srv.NewApp("Web")
+	srv.Post(backup, 3, "b")
+	srv.Post(web, 3, "w")
+	id, err := a.AddServer(ctx, ServerInput{URL: srv.URL(), User: harness.AdminUser, Pass: harness.AdminPass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "import", func() bool { ids, _ := a.st.MessageIDs(id); return len(ids) == 6 })
+	remote := func() (out []uint) {
+		var page struct{ Messages []gotify.Message }
+		srv.API("GET", "/message?limit=200", nil, &page)
+		for _, m := range page.Messages {
+			out = append(out, m.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+	local := func() []uint { ids, _ := a.st.MessageIDs(id); return ids }
+
+	all := local()
+	if err := a.DeleteMessages(ctx, id, all[:2]); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(remote(), all[2:]) || !slices.Equal(local(), all[2:]) {
+		t.Fatalf("remote %v local %v", remote(), local())
+	}
+
+	msgs, _ := a.Messages(store.MessageQuery{ServerID: id})
+	webApp := msgs[0].AppID
+	if err := a.ClearMessages(ctx, id, webApp); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(remote(), all[2:3]) || !slices.Equal(local(), all[2:3]) {
+		t.Fatalf("after clearing an app: remote %v local %v", remote(), local())
+	}
+
+	// Deleted in the web UI: the next connection notices.
+	srv.API("DELETE", "/message", nil, nil)
+	srv.Post(backup, 1, "new")
+	a.KickAll()
+	eventually(t, "reconcile", func() bool { l := local(); return len(l) == 1 && l[0] > all[5] })
+
+	if err := a.ClearMessages(ctx, id, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(remote()) != 0 || len(local()) != 0 {
+		t.Fatalf("after clearing the server: remote %v local %v", remote(), local())
+	}
 }

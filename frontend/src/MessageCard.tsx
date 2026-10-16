@@ -250,22 +250,40 @@ export function useMessageMenu(msg: Message, root: { readonly current: HTMLEleme
   return { items, onOpenChange };
 }
 
+/**
+ * A message's menu. On a message among several selected (bulkCount of them),
+ * it acts on all of them instead.
+ */
 export function MessageMenu({
   msg,
   deleting,
   onDelete,
+  bulkCount = 0,
+  onBulkRead,
+  onBulkDelete,
   children,
 }: {
   msg: Message;
   deleting: boolean;
   onDelete(msg: Message): void;
+  bulkCount?: number;
+  onBulkRead?(): void;
+  onBulkDelete?(): void;
   children: ReactNode;
 }) {
   const t = useT();
   const root = useRef<HTMLDivElement>(null);
   const { items, onOpenChange } = useMessageMenu(msg, root, deleting, onDelete);
+  const shown =
+    bulkCount > 1 && onBulkRead && onBulkDelete
+      ? [
+          { label: t.markSelectedRead(bulkCount), onClick: onBulkRead },
+          { type: "divider" as const },
+          { label: t.deleteSelected(bulkCount), variant: "destructive" as const, onClick: onBulkDelete },
+        ]
+      : items;
   return (
-    <ContextMenu ref={root} items={items} label={t.messageActions} onOpenChange={onOpenChange}>
+    <ContextMenu ref={root} items={shown} label={t.messageActions} onOpenChange={onOpenChange}>
       {children}
     </ContextMenu>
   );

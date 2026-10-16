@@ -58,6 +58,9 @@ func (n *linuxNotifier) listen(ch <-chan *dbus.Signal) {
 			n.mu.Lock()
 			id := n.byNum[num]
 			n.mu.Unlock()
+			if key, _ := s.Body[1].(string); key != "default" && key != "" && id != "" {
+				id = ActionArgs(id, key)
+			}
 			n.act.fire(id)
 		case dbusDest + ".NotificationClosed":
 			n.mu.Lock()
@@ -86,9 +89,13 @@ func (n *linuxNotifier) Show(nn Notification) error {
 	n.mu.Lock()
 	replaces := n.byKey[nn.ID]
 	n.mu.Unlock()
+	actions := []string{"default", "Open"}
+	for _, a := range nn.Actions {
+		actions = append(actions, a.ID, a.Label)
+	}
 	var num uint32
 	err := n.obj.Call(dbusDest+".Notify", 0, n.appName, replaces, nn.IconPath, nn.Title, body,
-		[]string{"default", "Open"}, hints, int32(-1)).Store(&num)
+		actions, hints, int32(-1)).Store(&num)
 	if err != nil {
 		return err
 	}

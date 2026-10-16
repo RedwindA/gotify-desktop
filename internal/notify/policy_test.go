@@ -8,6 +8,7 @@ import (
 
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
+	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/store"
 )
 
@@ -269,5 +270,47 @@ func TestActivatorReplaysPending(t *testing.T) {
 	a.fire("c")
 	if strings.Join(got, ",") != "a,b,c" {
 		t.Fatal(got)
+	}
+}
+
+func TestActions(t *testing.T) {
+	link := msg(2, 1, 5, "t", "b")
+	link.Extras = map[string]any{"client::notification": map[string]any{"click": map[string]any{"url": "https://example.com"}}}
+	out := plan(live(msg(1, 1, 5, "t", "b"), link), nil, DefaultSettings(), t0)
+	if len(out) != 2 || len(out[0].Actions) != 1 || out[0].Actions[0].ID != ActionRead ||
+		len(out[1].Actions) != 2 || out[1].Actions[1].ID != ActionOpen {
+		t.Fatalf("%+v", out)
+	}
+	ev := live(msg(1, 1, 5, "", "a"), msg(2, 2, 5, "", "b"), msg(3, 1, 5, "", "c"), msg(4, 2, 5, "", "d"))
+	ev.CatchUp = true
+	if out := plan(ev, nil, DefaultSettings(), t0); len(out) != 1 || len(out[0].Actions) != 1 || out[0].Actions[0].ID != ActionRead {
+		t.Fatalf("%+v", out)
+	}
+	for _, c := range [][3]string{{"s1-m2", "s1-m2", ""}, {"s1-m2#read", "s1-m2", "read"}, {ActionArgs("s1-a3-burst", ActionRead), "s1-a3-burst", "read"}} {
+		if id, action := SplitActivation(c[0]); id != c[1] || action != c[2] {
+			t.Errorf("SplitActivation(%q) = %q, %q", c[0], id, action)
+		}
+	}
+}
+
+func TestActionSetsCoverEveryLanguage(t *testing.T) {
+	sets := ActionSets()
+	has := func(want []Action) bool {
+		for _, s := range sets {
+			if fmt.Sprint(s) == fmt.Sprint(want) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, lang := range i18n.Langs {
+		i18n.SetPreference(string(lang))
+		if !has(messageActions(false)) || !has(messageActions(true)) || !has(summaryActions()) {
+			t.Errorf("%s: a notification's buttons are not registered at startup", lang)
+		}
+	}
+	i18n.SetPreference("")
+	if !has([]Action{{ID: ActionRead, Label: "标为已读"}}) {
+		t.Error("no Chinese set")
 	}
 }
