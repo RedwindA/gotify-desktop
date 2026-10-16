@@ -2,6 +2,14 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.3.0
+
+- Messages deleted on the server, in the web UI or another client, disappear here too: on every connect and every 10 minutes.
+- Settings has Message history: keep messages forever, or for 1 week up to 1 year. Older ones are deleted from this computer only.
+- On Windows, the app uses the system proxy from Internet Options and its bypass list; HTTPS_PROXY, HTTP_PROXY and NO_PROXY take priority.
+- Ctrl-click, Shift-click, Shift+arrow keys or Ctrl+A select several messages to mark as read or delete together. Each app and server in the sidebar has Delete all messages.
+- Notifications have Mark as read and Open link buttons, and summaries Mark all as read. Marking messages read also clears their notifications.
+
 ## 0.2.4
 
 - Inline code in markdown messages copies with a click.
