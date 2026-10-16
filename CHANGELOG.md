@@ -2,6 +2,11 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.3.2
+
+- With the language set to follow the system, the app shows Chinese on Chinese systems again. Since 0.2.4 it showed English.
+- The update window and the macOS menus show the language chosen in Settings too.
+
 ## 0.3.1
 
 - Drag apps in the sidebar to reorder them, or use Move up and Move down in their menu. The order is the server's, so the web UI and other clients show it too (Gotify 2.9 or later).
