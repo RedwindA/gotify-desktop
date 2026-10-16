@@ -2,6 +2,10 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.3.1
+
+- Drag apps in the sidebar to reorder them, or use Move up and Move down in their menu. The order is the server's, so the web UI and other clients show it too (Gotify 2.9 or later).
+
 ## 0.3.0
 
 - Messages deleted on the server, in the web UI or another client, disappear here too: on every connect and every 10 minutes.
