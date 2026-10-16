@@ -135,6 +135,9 @@ type Supervisor struct {
 
 	known     map[uint]bool
 	missingAt map[uint]time.Time
+	// appsSlot is held while the applications are fetched and stored, and by
+	// WithApps: a refresh fetched before a change must not be stored after it.
+	appsSlot chan struct{}
 }
 
 func New(serverID int64, client *gotify.Client, st Store, sink func(Event), cfg Config) *Supervisor {
@@ -145,7 +148,7 @@ func New(serverID int64, client *gotify.Client, st Store, sink func(Event), cfg 
 	return &Supervisor{
 		id: serverID, st: st, sink: sink, cfg: cfg.withDefaults(), client: client,
 		ctx: ctx, cancel: cancel, kick: make(chan struct{}, 1), done: make(chan struct{}),
-		imageWake: make(chan struct{}, 1), known: map[uint]bool{}, missingAt: map[uint]time.Time{},
+		imageWake: make(chan struct{}, 1), known: map[uint]bool{}, missingAt: map[uint]time.Time{}, appsSlot: make(chan struct{}, 1),
 	}
 }
 
@@ -401,21 +404,38 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 	}
 }
 
-func (s *Supervisor) syncApps(ctx context.Context, client *gotify.Client) error {
-	apps, err := client.Applications(ctx)
-	if err != nil {
-		return err
+// WithApps runs f, which changes the applications on the server and here,
+// while no refresh of them runs, and then fetches the images they miss.
+func (s *Supervisor) WithApps(ctx context.Context, f func() error) error {
+	select {
+	case s.appsSlot <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	if err := s.st.ReplaceApps(s.id, apps); err != nil {
+	defer func() {
+		<-s.appsSlot
+		select {
+		case s.imageWake <- struct{}{}:
+		default:
+		}
+	}()
+	return f()
+}
+
+func (s *Supervisor) syncApps(ctx context.Context, client *gotify.Client) error {
+	var apps []gotify.Application
+	err := s.WithApps(ctx, func() (err error) {
+		if apps, err = client.Applications(ctx); err != nil {
+			return err
+		}
+		return s.st.ReplaceApps(s.id, apps)
+	})
+	if err != nil {
 		return err
 	}
 	s.known = make(map[uint]bool, len(apps))
 	for _, a := range apps {
 		s.known[a.ID] = true
-	}
-	select {
-	case s.imageWake <- struct{}{}:
-	default:
 	}
 	s.sink(Event{ServerID: s.id, Kind: EventApps})
 	return nil

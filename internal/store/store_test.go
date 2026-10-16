@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -171,6 +172,32 @@ func TestReplaceAppsKeepsImageUntilPathChanges(t *testing.T) {
 	s.ReplaceApps(id, apps[:1])
 	if got, _ = s.Apps(id); len(got) != 1 || got[0].ID != 1 {
 		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAppsInSortKeyOrder(t *testing.T) {
+	s, id := open(t)
+	s.ReplaceApps(id, []gotify.Application{{ID: 1, Name: "A", SortKey: "a1"}, {ID: 2, Name: "B", SortKey: "a0"}, {ID: 3, Name: "C", SortKey: "Zz"}})
+	order := func() (ids []uint) {
+		got, _ := s.Apps(id)
+		for _, a := range got {
+			ids = append(ids, a.ID)
+		}
+		return ids
+	}
+	if got := order(); !slices.Equal(got, []uint{3, 2, 1}) {
+		t.Fatalf("%v", got)
+	}
+	if err := s.SetAppSortKey(id, 3, "a2"); err != nil {
+		t.Fatal(err)
+	}
+	if got := order(); !slices.Equal(got, []uint{2, 1, 3}) {
+		t.Fatalf("%v", got)
+	}
+	// Without sort keys (gotify before 2.9), by id.
+	s.ReplaceApps(id, []gotify.Application{{ID: 2, Name: "B"}, {ID: 1, Name: "A"}})
+	if got := order(); !slices.Equal(got, []uint{1, 2}) {
+		t.Fatalf("%v", got)
 	}
 }
 

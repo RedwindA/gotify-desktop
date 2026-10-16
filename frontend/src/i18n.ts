@@ -20,6 +20,8 @@ const en = {
   removeServer: "Remove server…",
   clearMessages: "Delete all messages…",
   notificationSettings: "Notification settings…",
+  moveUp: "Move up",
+  moveDown: "Move down",
   muted: "Muted",
 
   connected: "Connected",
@@ -101,6 +103,7 @@ const en = {
   removeText: "Its messages are deleted from this computer and this device signs out of the server.",
   removeAction: "Remove server",
   couldNotRemove: (e: string) => `Couldn't remove the server: ${e}`,
+  couldNotMoveApp: (e: string) => `Couldn't move the app: ${e}`,
 
   clearAppTitle: (name: string) => `Delete all messages of “${name}”?`,
   clearServerTitle: (name: string) => `Delete all messages on “${name}”?`,
@@ -175,6 +178,8 @@ const zh: Messages = {
   removeServer: "移除服务器…",
   clearMessages: "删除全部消息…",
   notificationSettings: "通知设置…",
+  moveUp: "上移",
+  moveDown: "下移",
   muted: "已静音",
 
   connected: "已连接",
@@ -256,6 +261,7 @@ const zh: Messages = {
   removeText: "这台电脑上它的消息会被删除，并且此设备会从该服务器注销。",
   removeAction: "移除服务器",
   couldNotRemove: (e) => `无法移除服务器：${e}`,
+  couldNotMoveApp: (e) => `无法移动应用：${e}`,
 
   clearAppTitle: (name) => `删除“${name}”的全部消息？`,
   clearServerTitle: (name) => `删除“${name}”上的全部消息？`,

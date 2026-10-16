@@ -41,6 +41,8 @@ type Backend interface {
 	RemoveServer(ctx context.Context, serverID int64) error
 	SetSettings(s notify.Settings) error
 	SetAppPref(serverID int64, appID uint, p store.AppPref) error
+	// MoveApp moves an app before another, or last when beforeID is 0.
+	MoveApp(ctx context.Context, serverID int64, appID, beforeID uint) error
 	Test() error
 	// FetchImage downloads the image of a message, from a URL in its extras.
 	FetchImage(ctx context.Context, url string) ([]byte, error)
@@ -166,7 +168,9 @@ type Server struct {
 	// RetryAt is when a server in backoff tries again.
 	RetryAt *time.Time `json:"retryAt"`
 	Apps    []App      `json:"apps"`
-	Unread  int        `json:"unread"`
+	// AppsSortable is whether MoveApp can reorder the apps (gotify 2.9 and later).
+	AppsSortable bool `json:"appsSortable"`
+	Unread       int  `json:"unread"`
 }
 
 // App is an application of a server, which sends messages.
@@ -409,7 +413,7 @@ func (d *Desktop) State() State {
 	s.Language = Language(i18n.Resolve(snap.Settings.Language))
 	for _, sv := range snap.Servers {
 		out := Server{ID: sv.ID, Name: sv.Name, URL: sv.URL, Insecure: sv.Insecure, HasCA: sv.HasCA,
-			State: connState(sv.State), Error: sv.Err, Unread: sv.Unread, Apps: []App{}}
+			State: connState(sv.State), Error: sv.Err, Unread: sv.Unread, Apps: []App{}, AppsSortable: sv.AppsSortable}
 		if sv.State == conn.Backoff && !sv.RetryAt.IsZero() {
 			t := sv.RetryAt
 			out.RetryAt = &t
@@ -631,6 +635,18 @@ func (d *Desktop) ClearMessages(ctx context.Context, serverID int64, appID uint)
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	return explain(d.be.ClearMessages(ctx, serverID, appID))
+}
+
+// MoveApp moves an app of a server before another, or last when beforeAppID
+// is 0, in the order the server keeps for the apps.
+func (d *Desktop) MoveApp(ctx context.Context, serverID int64, appID, beforeAppID uint) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	err := d.be.MoveApp(ctx, serverID, appID, beforeAppID)
+	if errors.Is(err, app.ErrAppsNotSortable) {
+		return errors.New(i18n.T("This server can't reorder apps. Gotify 2.9 or later can."))
+	}
+	return explain(err)
 }
 
 // AddServer signs in to a server and adds it. It returns the new server's ID.

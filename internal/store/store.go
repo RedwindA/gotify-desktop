@@ -90,7 +90,8 @@ CREATE TABLE deleted_messages(
 	PRIMARY KEY(server_id, id)
 );
 `}, {sql: `ALTER TABLE server_state ADD COLUMN import_floor INTEGER NOT NULL DEFAULT 0;`},
-	{sql: `ALTER TABLE server_state ADD COLUMN pruned_before INTEGER NOT NULL DEFAULT 0;`}}
+	{sql: `ALTER TABLE server_state ADD COLUMN pruned_before INTEGER NOT NULL DEFAULT 0;`},
+	{sql: `ALTER TABLE apps ADD COLUMN sort_key TEXT NOT NULL DEFAULT '';`}}
 
 type Store struct{ db *sql.DB }
 
@@ -248,7 +249,9 @@ type App struct {
 	Description     string
 	ImagePath       string
 	DefaultPriority int
-	Image           []byte
+	// SortKey orders the apps as the server does, by bytes; gotify before 2.9 has none.
+	SortKey string
+	Image   []byte
 }
 
 // ReplaceApps upserts apps and deletes the ones missing; images survive while image_path is unchanged.
@@ -257,12 +260,12 @@ func (s *Store) ReplaceApps(serverID int64, apps []gotify.Application) error {
 		keep := make(map[uint]bool, len(apps))
 		for _, a := range apps {
 			keep[a.ID] = true
-			if _, err := tx.Exec(`INSERT INTO apps(server_id,id,name,description,image_path,default_priority) VALUES(?,?,?,?,?,?)
+			if _, err := tx.Exec(`INSERT INTO apps(server_id,id,name,description,image_path,default_priority,sort_key) VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(server_id,id) DO UPDATE SET name=excluded.name, description=excluded.description,
-default_priority=excluded.default_priority,
+default_priority=excluded.default_priority, sort_key=excluded.sort_key,
 image=CASE WHEN apps.image_path=excluded.image_path THEN apps.image ELSE NULL END,
 image_path=excluded.image_path`,
-				serverID, a.ID, a.Name, a.Description, a.Image, a.DefaultPriority); err != nil {
+				serverID, a.ID, a.Name, a.Description, a.Image, a.DefaultPriority, a.SortKey); err != nil {
 				return err
 			}
 		}
@@ -296,8 +299,15 @@ func (s *Store) SetAppImage(serverID int64, appID uint, img []byte) error {
 	return err
 }
 
+// SetAppSortKey keeps the sort key an app was given on the server.
+func (s *Store) SetAppSortKey(serverID int64, appID uint, key string) error {
+	_, err := s.db.Exec(`UPDATE apps SET sort_key=? WHERE server_id=? AND id=?`, key, serverID, appID)
+	return err
+}
+
+// Apps returns the apps of a server in its order: by sort key, then id.
 func (s *Store) Apps(serverID int64) ([]App, error) {
-	rows, err := s.db.Query(`SELECT id,name,description,image_path,default_priority,image FROM apps WHERE server_id=? ORDER BY id`, serverID)
+	rows, err := s.db.Query(`SELECT id,name,description,image_path,default_priority,sort_key,image FROM apps WHERE server_id=? ORDER BY sort_key, id`, serverID)
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +315,7 @@ func (s *Store) Apps(serverID int64) ([]App, error) {
 	var out []App
 	for rows.Next() {
 		var a App
-		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.ImagePath, &a.DefaultPriority, &a.Image); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.ImagePath, &a.DefaultPriority, &a.SortKey, &a.Image); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

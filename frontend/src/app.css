@@ -279,6 +279,12 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   border-bottom: 1px solid var(--color-border);
 }
 
+/* An app's row while the pointer drags it over the others. */
+.sidenav-app.dragging {
+  position: relative;
+  z-index: 1;
+}
+
 /* The image of a message (bigImageUrl), at its own proportions, no wider than
    the card nor taller than 360px. align-self keeps the column from stretching it. */
 .msg-image {

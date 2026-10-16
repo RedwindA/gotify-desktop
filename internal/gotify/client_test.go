@@ -2,6 +2,7 @@ package gotify
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -122,6 +123,23 @@ func TestLoginVersionApplications(t *testing.T) {
 	}
 	if b, err := c.Image(ctx, apps[0].Image); err != nil || string(b) != "PNG" {
 		t.Fatalf("%q %v", b, err)
+	}
+}
+
+func TestUpdateApplication(t *testing.T) {
+	c := newServer(t, "", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" || r.URL.Path != "/application/3" || r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("bad request %s %s %q", r.Method, r.URL, r.Header.Get("Content-Type"))
+		}
+		var p ApplicationParams
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil || p != (ApplicationParams{Name: "A", Description: "d", DefaultPriority: 4, SortKey: "a0V"}) {
+			t.Errorf("body %+v %v", p, err)
+		}
+		w.Write([]byte(`{"id":3,"name":"A","sortKey":"a0V"}`))
+	})
+	a, err := c.UpdateApplication(context.Background(), 3, ApplicationParams{Name: "A", Description: "d", DefaultPriority: 4, SortKey: "a0V"})
+	if err != nil || a.ID != 3 || a.SortKey != "a0V" {
+		t.Fatalf("%+v %v", a, err)
 	}
 }
 

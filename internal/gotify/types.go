@@ -24,6 +24,14 @@ type Application struct {
 	SortKey         string     `json:"sortKey"`
 }
 
+// ApplicationParams is the body of UpdateApplication.
+type ApplicationParams struct {
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	DefaultPriority int    `json:"defaultPriority"`
+	SortKey         string `json:"sortKey,omitempty"`
+}
+
 type Paging struct {
 	Next  string `json:"next,omitempty"`
 	Size  int    `json:"size"`

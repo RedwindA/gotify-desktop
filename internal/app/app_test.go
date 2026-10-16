@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
@@ -602,5 +605,150 @@ func TestClearAndBatchDeleteAgainstRealServer(t *testing.T) {
 	}
 	if len(remote()) != 0 || len(local()) != 0 {
 		t.Fatalf("after clearing the server: remote %v local %v", remote(), local())
+	}
+}
+
+func TestMoveAppAgainstRealServer(t *testing.T) {
+	harness.RequireIT(t)
+	srv := harness.StartServer(t)
+	ctx := context.Background()
+	a, _, _ := newApp(t, &secret.Memory{})
+	srv.NewApp("A")
+	srv.NewApp("B")
+	srv.NewApp("C")
+	id, err := a.AddServer(ctx, ServerInput{URL: srv.URL(), User: harness.AdminUser, Pass: harness.AdminPass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(apps []AppInfo) (out []string) {
+		for _, ap := range apps {
+			out = append(out, ap.Name)
+		}
+		return out
+	}
+	local := func() []AppInfo { sv, _ := a.Snapshot().Server(id); return sv.Apps }
+	remote := func() (out []string) {
+		var apps []gotify.Application
+		srv.API("GET", "/application", nil, &apps)
+		for _, ap := range apps {
+			out = append(out, ap.Name)
+		}
+		return out
+	}
+	eventually(t, "apps", func() bool { return len(local()) == 3 })
+	if sv, _ := a.Snapshot().Server(id); !sv.AppsSortable {
+		t.Fatal("not sortable")
+	}
+	appID := func(name string) uint {
+		for _, ap := range local() {
+			if ap.Name == name {
+				return ap.ID
+			}
+		}
+		t.Fatalf("no app %s", name)
+		return 0
+	}
+
+	steps := []struct {
+		move, before string
+		want         []string
+	}{
+		{"C", "A", []string{"C", "A", "B"}},
+		{"C", "", []string{"A", "B", "C"}},
+		{"A", "C", []string{"B", "A", "C"}},
+		{"A", "C", []string{"B", "A", "C"}}, // already there
+		// D is added on the server after the apps were fetched, and takes the
+		// key after C's: moving A last must not give it the same.
+		{"A", "", []string{"B", "C", "D", "A"}},
+	}
+	for _, s := range steps {
+		if s.move == "A" && s.before == "" {
+			srv.NewApp("D")
+		}
+		var before uint
+		if s.before != "" {
+			before = appID(s.before)
+		}
+		if err := a.MoveApp(ctx, id, appID(s.move), before); err != nil {
+			t.Fatal(err)
+		}
+		if got := names(local()); !slices.Equal(got, s.want) {
+			t.Fatalf("move %s before %q: local %v, want %v", s.move, s.before, got, s.want)
+		}
+		if got := remote(); !slices.Equal(got, s.want) {
+			t.Fatalf("move %s before %q: remote %v, want %v", s.move, s.before, got, s.want)
+		}
+	}
+}
+
+// A rebuild while the server takes the move, after a message say, must not
+// keep the order from before it.
+func TestMoveAppSurvivesARebuildDuringTheUpdate(t *testing.T) {
+	var mu sync.Mutex
+	keys := map[uint]string{1: "a0", 2: "a1"}
+	putting, release := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/application":
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewEncoder(w).Encode([]gotify.Application{{ID: 1, Name: "A", SortKey: keys[1]}, {ID: 2, Name: "B", SortKey: keys[2]}})
+		case r.Method == "PUT" && r.URL.Path == "/application/1":
+			var p gotify.ApplicationParams
+			json.NewDecoder(r.Body).Decode(&p)
+			close(putting)
+			<-release
+			mu.Lock()
+			keys[1] = p.SortKey
+			mu.Unlock()
+			json.NewEncoder(w).Encode(gotify.Application{ID: 1, Name: "A", SortKey: p.SortKey})
+		case r.URL.Path == "/message":
+			w.Write([]byte(`{"paging":{},"messages":[]}`))
+		case r.URL.Path == "/stream":
+			c, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer c.CloseNow()
+			for {
+				if _, _, err := c.Read(r.Context()); err != nil {
+					return
+				}
+			}
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	st, _ := store.Open(dir + "/gotify.db")
+	id, _ := st.AddServer(store.Server{Name: "s", URL: srv.URL})
+	st.Close()
+	tokens := &secret.Memory{}
+	tokens.Set(id, "tok")
+	a, err := New(Options{DataDir: dir, CacheDir: t.TempDir(), Tokens: tokens, Notifier: &fakeNotifier{},
+		ConnConfig: conn.Config{MinBackoff: time.Second}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	order := func() (out []string) {
+		sv, _ := a.Snapshot().Server(id)
+		for _, ap := range sv.Apps {
+			out = append(out, ap.Name)
+		}
+		return out
+	}
+	eventually(t, "apps", func() bool { return slices.Equal(order(), []string{"A", "B"}) })
+	moved := make(chan error, 1)
+	go func() { moved <- a.MoveApp(context.Background(), id, 1, 0) }()
+	<-putting
+	a.rebuild(true)
+	close(release)
+	if err := <-moved; err != nil {
+		t.Fatal(err)
+	}
+	if got := order(); !slices.Equal(got, []string{"B", "A"}) {
+		t.Fatalf("%v", got)
 	}
 }

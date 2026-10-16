@@ -14,11 +14,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"gotify-desktop/internal/conn"
+	"gotify-desktop/internal/fracdex"
 	"gotify-desktop/internal/gotify"
 	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
@@ -44,6 +47,7 @@ type AppInfo struct {
 	Name            string
 	Description     string
 	DefaultPriority int
+	SortKey         string
 	Image           []byte
 	ImageKey        string
 	Unread          int
@@ -62,7 +66,9 @@ type ServerInfo struct {
 	RetryAt   time.Time
 	NeedLogin bool
 	Apps      []AppInfo
-	Unread    int
+	// AppsSortable is whether the server keeps an order of the apps (gotify 2.9 and later).
+	AppsSortable bool
+	Unread       int
 }
 
 // Snapshot is immutable: a new one replaces it after every change.
@@ -397,13 +403,15 @@ func (a *App) rebuild(messages bool) {
 			}
 			for _, ap := range apps {
 				pref := prefs[ap.ID]
-				cached = append(cached, AppInfo{ID: ap.ID, Name: ap.Name, Description: ap.Description, DefaultPriority: ap.DefaultPriority, Image: ap.Image, ImageKey: ImageKey(ap.Image), Muted: pref.Muted, MinPriority: pref.MinPriority})
+				cached = append(cached, AppInfo{ID: ap.ID, Name: ap.Name, Description: ap.Description, DefaultPriority: ap.DefaultPriority, SortKey: ap.SortKey, Image: ap.Image, ImageKey: ImageKey(ap.Image), Muted: pref.Muted, MinPriority: pref.MinPriority})
 			}
 			a.appCache[sv.ID] = cached
 		}
+		info.AppsSortable = len(cached) > 0
 		for _, ai := range cached {
 			ai.Unread = unread[sv.ID][ai.ID]
 			info.Apps = append(info.Apps, ai)
+			info.AppsSortable = info.AppsSortable && ai.SortKey != ""
 		}
 		for _, n := range unread[sv.ID] {
 			info.Unread += n
@@ -793,6 +801,93 @@ func (a *App) ClearMessages(ctx context.Context, serverID int64, appID uint) err
 	a.rebuild(true)
 	a.changed()
 	return nil
+}
+
+// ErrAppsNotSortable is returned by MoveApp for a server that keeps no order
+// of the apps: gotify before 2.9.
+var ErrAppsNotSortable = errors.New("the server keeps no order of the apps")
+
+// MoveApp moves an app of a server before another, or last when beforeID is
+// 0, on the server and then here. Like gotify's web UI it gives the app a new
+// sort key between its new neighbors. It fetches the apps first: one added on
+// the server since they were last fetched could have the very key, and the
+// update sends the name, description and default priority along, as the
+// server sets them all.
+func (a *App) MoveApp(ctx context.Context, serverID int64, appID, beforeID uint) error {
+	client, err := a.clientOf(serverID)
+	if err != nil {
+		return err
+	}
+	v, err := a.runtimeOf(serverID)
+	if err != nil {
+		return err
+	}
+	move := func() error {
+		apps, err := client.Applications(ctx)
+		if err != nil {
+			return err
+		}
+		if err := a.st.ReplaceApps(serverID, apps); err != nil {
+			return err
+		}
+		// The order of Store.Apps, which the server's matches.
+		slices.SortStableFunc(apps, func(x, y gotify.Application) int {
+			return cmp.Or(strings.Compare(x.SortKey, y.SortKey), cmp.Compare(x.ID, y.ID))
+		})
+		var moved *gotify.Application
+		var rest []gotify.Application
+		for i, ap := range apps {
+			if ap.SortKey == "" {
+				return ErrAppsNotSortable
+			}
+			if ap.ID == appID {
+				moved = &apps[i]
+			} else {
+				rest = append(rest, ap)
+			}
+		}
+		if moved == nil {
+			return fmt.Errorf("no app %d", appID)
+		}
+		at := len(rest)
+		if beforeID != 0 {
+			if at = slices.IndexFunc(rest, func(ap gotify.Application) bool { return ap.ID == beforeID }); at < 0 {
+				return fmt.Errorf("no app %d", beforeID)
+			}
+		}
+		var prev, next string
+		if at > 0 {
+			prev = rest[at-1].SortKey
+		}
+		if at < len(rest) {
+			next = rest[at].SortKey
+		}
+		if prev < moved.SortKey && (next == "" || moved.SortKey < next) {
+			return nil // already there
+		}
+		key, err := fracdex.KeyBetween(prev, next)
+		if err != nil {
+			return err
+		}
+		updated, err := client.UpdateApplication(ctx, appID, gotify.ApplicationParams{
+			Name: moved.Name, Description: moved.Description, DefaultPriority: moved.DefaultPriority, SortKey: key})
+		if err != nil {
+			return err
+		}
+		return a.st.SetAppSortKey(serverID, appID, cmp.Or(updated.SortKey, key))
+	}
+	// The supervisor's refresh of the apps must not store what it fetched
+	// before the move after it. One that starts while the server connects
+	// could, so a move waits for the connection.
+	if v.sup == nil {
+		return errors.New(i18n.T("Not connected to the server yet."))
+	}
+	err = v.sup.WithApps(ctx, move)
+	// After the last write: a rebuild meanwhile may have cached the apps before it.
+	a.metadataDirty.Store(true)
+	a.rebuild(false)
+	a.changed()
+	return err
 }
 
 func (a *App) MarkRead(serverID int64, ids ...uint) error {

@@ -40,12 +40,12 @@ func Demo(imageURL string) *FakeBackend {
 		return app.AppInfo{ID: id, Name: name, Image: img, ImageKey: app.ImageKey(img)}
 	}
 	f.Servers = []app.ServerInfo{
-		{ID: 1, Name: "Home Server", URL: "https://gotify.home.example", State: conn.Connected, Apps: []app.AppInfo{
+		{ID: 1, Name: "Home Server", URL: "https://gotify.home.example", State: conn.Connected, AppsSortable: true, Apps: []app.AppInfo{
 			mkApp(1, "Backup", color.RGBA{0x2b, 0x8c, 0xf0, 255}), mkApp(2, "Monitoring", color.RGBA{0xe0, 0x5a, 0x47, 255}),
 			func() app.AppInfo { a := app.AppInfo{ID: 3, Name: "Home Assistant"}; return a }(),
 		}},
 		{ID: 2, Name: "Work Gotify", URL: "https://notify.work.example", State: conn.Backoff, Err: "Can't reach the server: connection refused",
-			RetryAt: now.Add(12 * time.Second), Apps: []app.AppInfo{mkApp(1, "CI", color.RGBA{0x2f, 0xa4, 0x6b, 255}), mkApp(2, "Deploys", color.RGBA{0x8a, 0x5c, 0xd6, 255})}},
+			RetryAt: now.Add(12 * time.Second), AppsSortable: true, Apps: []app.AppInfo{mkApp(1, "CI", color.RGBA{0x2f, 0xa4, 0x6b, 255}), mkApp(2, "Deploys", color.RGBA{0x8a, 0x5c, 0xd6, 255})}},
 	}
 	msg := func(server int64, id, appID uint, ago time.Duration, prio int, title, body string, read bool, extras map[string]any) store.StoredMessage {
 		return store.StoredMessage{ServerID: server, Read: read, Message: gotify.Message{
@@ -74,7 +74,6 @@ func Demo(imageURL string) *FakeBackend {
 
 // demoSnapshotURL is the image of a demo message, which FetchImage serves without a network.
 const demoSnapshotURL = "https://ha.home.example/api/camera_proxy/camera.front_door"
-
 
 // DemoChart is the image of the demo's chart message, a PNG.
 func DemoChart() []byte {

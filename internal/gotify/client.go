@@ -123,9 +123,25 @@ func (c *Client) endpoint(path string, query url.Values) string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, c.endpoint(path, query), nil)
+	return c.send(ctx, method, path, query, nil, out)
+}
+
+// send is do with a JSON body, which in is encoded to unless it is nil.
+func (c *Client) send(ctx context.Context, method, path string, query url.Values, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.endpoint(path, query), body)
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("X-Gotify-Key", c.token)
 	return doRequest(c.http, req, out)
@@ -195,6 +211,14 @@ func (c *Client) Version(ctx context.Context) (v VersionInfo, err error) {
 
 func (c *Client) Applications(ctx context.Context) (apps []Application, err error) {
 	err = c.do(ctx, http.MethodGet, "/application", nil, &apps)
+	return
+}
+
+// UpdateApplication changes an application. gotify takes the name,
+// description and default priority from p as they are, and the sort key
+// unless it is empty (gotify 2.9 and later).
+func (c *Client) UpdateApplication(ctx context.Context, id uint, p ApplicationParams) (a Application, err error) {
+	err = c.send(ctx, http.MethodPut, "/application/"+strconv.FormatUint(uint64(id), 10), nil, p, &a)
 	return
 }
 

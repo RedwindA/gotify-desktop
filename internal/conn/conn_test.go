@@ -33,6 +33,7 @@ type fakeServer struct {
 	images    atomic.Int32
 	onMessage func()
 	onImage   func()
+	onApps    func()
 }
 
 func newFake(t *testing.T) *fakeServer {
@@ -49,6 +50,9 @@ func newFake(t *testing.T) *fakeServer {
 		}
 	}
 	mux.HandleFunc("/application", guard(func(w http.ResponseWriter, r *http.Request) {
+		if f.onApps != nil {
+			f.onApps()
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		json.NewEncoder(w).Encode(f.apps)
@@ -306,6 +310,48 @@ func TestUnknownAppTriggersResync(t *testing.T) {
 	e, _ := rec.wait(t, n, isMsgs)
 	apps, _ := st.Apps(e.ServerID)
 	if len(apps) != 2 || apps[1].Name != "New" {
+		t.Fatalf("%+v", apps)
+	}
+}
+
+// A refresh of the apps that fetched them before a change (MoveApp) must not
+// store them after it.
+func TestRefreshOfAppsWaitsForWithApps(t *testing.T) {
+	f := newFake(t)
+	f.apps[0].SortKey = "a0"
+	fetched, release := make(chan struct{}), make(chan struct{})
+	f.onApps = func() {
+		close(fetched)
+		<-release
+	}
+	s, _, st := setup(t, f, Config{})
+	c, _ := gotify.New(f.URL, "tok", gotify.Options{})
+	ctx := context.Background()
+	synced := make(chan error, 1)
+	go func() { synced <- s.syncApps(ctx, c) }()
+	<-fetched
+	changed := make(chan error, 1)
+	go func() {
+		changed <- s.WithApps(ctx, func() error {
+			if err := st.ReplaceApps(s.id, []gotify.Application{{ID: 1, Name: "A", SortKey: "a0"}}); err != nil {
+				return err
+			}
+			return st.SetAppSortKey(s.id, 1, "a5")
+		})
+	}()
+	select {
+	case <-changed:
+		t.Fatal("the change ran during the refresh")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-synced; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-changed; err != nil {
+		t.Fatal(err)
+	}
+	if apps, _ := st.Apps(s.id); len(apps) != 1 || apps[0].SortKey != "a5" {
 		t.Fatalf("%+v", apps)
 	}
 }

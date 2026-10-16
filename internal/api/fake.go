@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -257,6 +258,37 @@ func (f *FakeBackend) SetAppPref(serverID int64, appID uint, p store.AppPref) er
 	}
 	f.refresh()
 	return nil
+}
+
+// MoveApp moves an app before another, or last when beforeID is 0, on a server with AppsSortable.
+func (f *FakeBackend) MoveApp(ctx context.Context, serverID int64, appID, beforeID uint) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.Servers {
+		sv := &f.Servers[i]
+		if sv.ID != serverID {
+			continue
+		}
+		if !sv.AppsSortable {
+			return app.ErrAppsNotSortable
+		}
+		from := slices.IndexFunc(sv.Apps, func(a app.AppInfo) bool { return a.ID == appID })
+		if from < 0 {
+			return fmt.Errorf("no app %d", appID)
+		}
+		moved := sv.Apps[from]
+		apps := slices.Delete(slices.Clone(sv.Apps), from, from+1)
+		at := len(apps)
+		if beforeID != 0 {
+			if at = slices.IndexFunc(apps, func(a app.AppInfo) bool { return a.ID == beforeID }); at < 0 {
+				return fmt.Errorf("no app %d", beforeID)
+			}
+		}
+		sv.Apps = slices.Insert(apps, at, moved)
+		f.refresh()
+		return nil
+	}
+	return fmt.Errorf("no server %d", serverID)
 }
 
 func (f *FakeBackend) Test() error { f.Tested.Add(1); return nil }

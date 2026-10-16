@@ -153,6 +153,14 @@ export function App() {
         }
       })(),
     appPrefs: (sv: Server, a: GotifyApp) => setPrefs({ serverId: sv.id, appId: a.id }),
+    moveApp: async (server, appId, beforeId) => {
+      try {
+        await Desktop.moveApp(server.id, appId, beforeId);
+        await refreshState();
+      } catch (err) {
+        onError(t.couldNotMoveApp(errorText(err)));
+      }
+    },
   };
   const openAdd = () => setDialog({ kind: "add" });
 

@@ -139,6 +139,8 @@ export interface Server {
   /** RetryAt is when a server in backoff tries again. */
   retryAt: string | null;
   apps: App[];
+  /** AppsSortable is whether MoveApp can reorder the apps (gotify 2.9 and later). */
+  appsSortable: boolean;
   unread: number;
 }
 
@@ -249,6 +251,13 @@ export const Desktop = {
   /** Messages returns the newest messages that match q. */
   messages(q: Query): Promise<MessagePage> {
     return call("Desktop.Messages", q);
+  },
+  /**
+   * MoveApp moves an app of a server before another, or last when beforeAppID
+   * is 0, in the order the server keeps for the apps.
+   */
+  moveApp(serverID: number, appID: number, beforeAppID: number): Promise<void> {
+    return call("Desktop.MoveApp", serverID, appID, beforeAppID);
   },
   /** OpenURL opens an http(s) or mailto URL in the default app. */
   openURL(raw: string): Promise<void> {

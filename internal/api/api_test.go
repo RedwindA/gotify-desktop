@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -175,6 +176,32 @@ func TestMarkReadAndMarkAllRead(t *testing.T) {
 	d.MarkAllRead(0, 0)
 	if s := d.State(); s.Unread != 0 {
 		t.Fatalf("after all: %d", s.Unread)
+	}
+}
+
+func TestMoveApp(t *testing.T) {
+	f := Demo("")
+	_, d := start(t, f, Platform{})
+	ctx := context.Background()
+	order := func() (ids []uint) {
+		for _, a := range d.State().Servers[0].Apps {
+			ids = append(ids, a.ID)
+		}
+		return ids
+	}
+	if !d.State().Servers[0].AppsSortable {
+		t.Fatal("demo servers sort")
+	}
+	if err := d.MoveApp(ctx, 1, 3, 1); err != nil || !slices.Equal(order(), []uint{3, 1, 2}) {
+		t.Fatalf("before: %v %v", order(), err)
+	}
+	if err := d.MoveApp(ctx, 1, 3, 0); err != nil || !slices.Equal(order(), []uint{1, 2, 3}) {
+		t.Fatalf("last: %v %v", order(), err)
+	}
+	f.Servers[0].AppsSortable = false
+	f.Refresh()
+	if err := d.MoveApp(ctx, 1, 3, 1); err == nil || !strings.Contains(err.Error(), "2.9") {
+		t.Fatalf("old server: %v", err)
 	}
 }
 

@@ -6,7 +6,12 @@ import { MoreMenu } from "@astryxdesign/core/MoreMenu";
 import { MobileNav } from "@astryxdesign/core/MobileNav";
 import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { DndContext, MouseSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { BellIcon, BellOffIcon, InboxIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type { App, Server, State } from "./mygo";
 import { useT, type Messages } from "./i18n";
 import { go as goTo, useAppImage, useNow, type Route } from "./store";
@@ -19,6 +24,8 @@ export interface ServerActions {
   /** Deletes the messages of an app, or of the server without one. */
   clear(sv: Server, app?: App): void;
   appPrefs(sv: Server, app: App): void;
+  /** Moves an app before another, or last when beforeId is 0, and settles once the state shows it. */
+  moveApp(sv: Server, appId: number, beforeId: number): Promise<void>;
 }
 
 function count(n: number) {
@@ -53,6 +60,94 @@ function ServerStatus({ sv }: { sv: Server }) {
 export function AppAvatar({ serverId, app, size }: { serverId: number; app: App | undefined; size: "xsm" | "sm" | "md" }) {
   const src = useAppImage(serverId, app?.id ?? 0, app?.imageKey ?? "");
   return <Avatar size={size} shape="rounded" name={app?.name || "?"} src={src} tooltip={false} />;
+}
+
+/** An app's row, which the pointer drags to reorder the apps of its server. */
+function SortableApp({ id, disabled, children }: { id: number; disabled: boolean; children: ReactNode }) {
+  const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({ id, disabled });
+  return (
+    <div
+      ref={setNodeRef}
+      className={isDragging ? "sidenav-app dragging" : "sidenav-app"}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The apps of a server in their order; the pointer drags them, the menu moves them up and down. */
+function ServerApps({
+  sv,
+  actions,
+  isSel,
+  go,
+}: {
+  sv: Server;
+  actions: ServerActions;
+  isSel(serverId: number, appId: number): boolean;
+  go(r: Route): void;
+}) {
+  const t = useT();
+  // A moved app keeps its new place until the call settles, so it does not
+  // jump back while the server answers.
+  const [moving, setMoving] = useState<number[] | null>(null);
+  // A small distance tells a drag from a click. A finger first holds still, so
+  // that a swipe still scrolls the sidebar.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
+  const byId = new Map(sv.apps.map((a) => [a.id, a]));
+  const apps = moving && moving.length === sv.apps.length && moving.every((id) => byId.has(id)) ? moving.map((id) => byId.get(id)!) : sv.apps;
+  const ids = apps.map((a) => a.id);
+  const move = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= ids.length) return;
+    const next = arrayMove(ids, from, to);
+    setMoving(next);
+    void actions.moveApp(sv, ids[from]!, next[to + 1] ?? 0).finally(() => setMoving(null));
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over) move(ids.indexOf(Number(active.id)), ids.indexOf(Number(over.id)));
+  };
+  const sortable = sv.appsSortable && moving === null;
+  return (
+    <DndContext sensors={sensors} modifiers={[restrictToVerticalAxis]} onDragEnd={onDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy} disabled={!sortable}>
+        {apps.map((a, i) => (
+          <SortableApp key={a.id} id={a.id} disabled={!sortable}>
+            <SideNavItem
+              label={a.name}
+              icon={<AppAvatar serverId={sv.id} app={a} size="xsm" />}
+              isSelected={isSel(sv.id, a.id)}
+              onClick={() => go({ page: "messages", serverId: sv.id, appId: a.id })}
+              endContent={a.muted ? <Icon icon={BellOffIcon} size="sm" color="secondary" label={t.muted} /> : count(a.unread)}
+              actions={
+                <MoreMenu
+                  size="sm"
+                  label={t.appOptions(a.name)}
+                  items={[
+                    { label: t.notificationSettings, onClick: () => actions.appPrefs(sv, a) },
+                    { label: t.markAllRead, onClick: () => actions.markAllRead(sv.id, a.id), isDisabled: a.unread === 0 },
+                    ...(sv.appsSortable
+                      ? [
+                          { type: "divider" as const },
+                          { label: t.moveUp, onClick: () => move(i, i - 1), isDisabled: !sortable || i === 0 },
+                          { label: t.moveDown, onClick: () => move(i, i + 1), isDisabled: !sortable || i === apps.length - 1 },
+                        ]
+                      : []),
+                    { type: "divider" },
+                    { label: t.clearMessages, variant: "destructive", onClick: () => actions.clear(sv, a) },
+                  ]}
+                />
+              }
+            />
+          </SortableApp>
+        ))}
+      </SortableContext>
+    </DndContext>
+  );
 }
 
 function SidebarTop() {
@@ -146,28 +241,7 @@ export function Sidebar({
               />
             }
           />
-          {sv.apps.map((a) => (
-            <SideNavItem
-              key={a.id}
-              label={a.name}
-              icon={<AppAvatar serverId={sv.id} app={a} size="xsm" />}
-              isSelected={isSel(sv.id, a.id)}
-              onClick={() => go({ page: "messages", serverId: sv.id, appId: a.id })}
-              endContent={a.muted ? <Icon icon={BellOffIcon} size="sm" color="secondary" label={t.muted} /> : count(a.unread)}
-              actions={
-                <MoreMenu
-                  size="sm"
-                  label={t.appOptions(a.name)}
-                  items={[
-                    { label: t.notificationSettings, onClick: () => actions.appPrefs(sv, a) },
-                    { label: t.markAllRead, onClick: () => actions.markAllRead(sv.id, a.id), isDisabled: a.unread === 0 },
-                    { type: "divider" },
-                    { label: t.clearMessages, variant: "destructive", onClick: () => actions.clear(sv, a) },
-                  ]}
-                />
-              }
-            />
-          ))}
+          <ServerApps sv={sv} actions={actions} isSel={isSel} go={go} />
         </SideNavSection>
       ))}
     </>

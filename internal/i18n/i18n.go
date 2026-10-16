@@ -129,6 +129,8 @@ var chinese = map[string]string{
 	"This file is not a PEM certificate.":                                                       "此文件不是 PEM 证书。",
 	"Choosing files is not available.":                                                          "无法选择文件。",
 	"Starting at login is not available.":                                                       "无法设置开机启动。",
+	"Not connected to the server yet.":                                                          "尚未连接到服务器。",
+	"This server can't reorder apps. Gotify 2.9 or later can.":                                  "此服务器不支持调整应用顺序，需要 Gotify 2.9 或更高版本。",
 	"Checking for updates is not available.":                                                    "无法检查更新。",
 	"Can't open %q.":                                                                            "无法打开 %q。",
 }
