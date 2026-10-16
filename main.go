@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	_ "github.com/egoist/mygo/locales/zh-Hans"
 	"github.com/egoist/mygo/plugins/updater"
 
 	"gotify-desktop/internal/api"
@@ -55,6 +56,9 @@ func main() {
 	// Images of messages and updates go through the system's proxy too.
 	sysproxy.Install()
 	mygo.App.SetName(appName)
+	// The languages MyGo's own texts (menus, the update window) and the
+	// webview's follow; App.Locale is one of these since MyGo 0.5.
+	mygo.App.SetLanguages("en", "zh-Hans")
 	// The version is "version" in mygo.json, which mygo build stamps into
 	// the app; the updater compares it with the published one.
 	if mygo.App.Version() == "" {
@@ -183,12 +187,19 @@ type desktop struct {
 	trayState  string
 	pauseTimer *time.Timer
 	theme      *string // the appearance last applied, on the main thread
+	locale     *string // the language last given to MyGo, on the main thread
 	menuHave   bool    // an application menu was installed for the language in menuLang
 	menuLang   string
 }
 
 func (d *desktop) start() {
-	i18n.SetSystem(mygo.App.Locale())
+	// The user's first language, not App.Locale, which is English for a
+	// reader of a language of neither SetLanguages nor ours (zh-Hant).
+	system := ""
+	if langs := mygo.App.PreferredLanguages(); len(langs) > 0 {
+		system = langs[0]
+	}
+	i18n.SetSystem(system)
 	d.startHidden = d.activationLaunch || mygo.App.WasOpenedAtLogin()
 	dataDir, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
@@ -222,6 +233,7 @@ func (d *desktop) start() {
 		return
 	}
 	d.applyTheme(d.ctrl.Settings().Theme)
+	d.applyLanguage(d.ctrl.Settings().Language)
 	d.installAppMenu()
 	d.api.Start(d.ctrl, dataDir)
 	if d.shots != "" {
@@ -405,6 +417,21 @@ func (d *desktop) runCommand(cmd api.Command) {
 	d.api.Command(cmd)
 }
 
+// applyLanguage makes MyGo's own texts (the update window, the items of the
+// macOS menus it names) follow the language the user chose, "" for the
+// system's. It runs on the main thread.
+func (d *desktop) applyLanguage(pref string) {
+	tag := pref
+	if pref == string(i18n.Chinese) {
+		tag = "zh-Hans"
+	}
+	if d.locale != nil && *d.locale == tag {
+		return
+	}
+	d.locale = &tag
+	mygo.App.SetLocale(tag)
+}
+
 // installAppMenu sets the macOS menu bar. Windows and Linux have none: the
 // page handles Ctrl+, and Ctrl+N. It runs on the main thread.
 func (d *desktop) installAppMenu() {
@@ -515,6 +542,7 @@ func (d *desktop) applyTray() {
 	}
 	snap := d.ctrl.Snapshot()
 	d.applyTheme(snap.Settings.Theme)
+	d.applyLanguage(snap.Settings.Language)
 	d.installAppMenu()
 	offline := false
 	for _, sv := range snap.Servers {
