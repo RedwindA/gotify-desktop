@@ -87,6 +87,7 @@ func main() {
 		PickCA:          d.pickCA,
 		OpenURL:         func(u string) { mygo.Shell.OpenExternal(u) },
 		CopyText:        mygo.Clipboard.WriteText,
+		ReadText:        mygo.Clipboard.ReadText,
 		ImageBase:       imageBase,
 		Confirm:         d.confirm,
 		Appearance:      d.appearance,

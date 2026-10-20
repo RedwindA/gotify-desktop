@@ -21,8 +21,8 @@ import (
 	"path"
 	"reflect"
 	"strings"
-	"time"
 	"sync"
+	"time"
 
 	"encoding/json/jsontext"
 
@@ -219,9 +219,24 @@ func main() {
 	}
 	be.Refresh()
 	ev := &events{subs: map[chan []byte]bool{}}
+	// A clipboard of its own, so that the page's Cut, Copy and Paste can be tried and tested.
+	var clip struct {
+		sync.Mutex
+		text string
+	}
 	ctrl := api.New(api.Platform{
 		Version: "0.1.0",
 		OpenURL: func(u string) { log.Printf("open %s", u) },
+		CopyText: func(text string) {
+			clip.Lock()
+			defer clip.Unlock()
+			clip.text = text
+		},
+		ReadText: func() string {
+			clip.Lock()
+			defer clip.Unlock()
+			return clip.text
+		},
 		PickCA: func(context.Context) (string, []byte, error) {
 			return "", nil, nil
 		},

@@ -58,6 +58,8 @@ type Platform struct {
 	PickCA   func(ctx context.Context) (name string, data []byte, err error)
 	OpenURL  func(url string)
 	CopyText func(text string)
+	// ReadText returns the text on the clipboard, for the page's Paste.
+	ReadText func() string
 	// ImageBase is the URL under which the desktop serves ImageHandler, ending
 	// in a slash; the page loads the images of messages from there.
 	ImageBase string
@@ -805,6 +807,16 @@ func (d *Desktop) CopyText(text string) {
 	if d.plat.CopyText != nil {
 		d.plat.CopyText(text)
 	}
+}
+
+// ReadText returns the text on the clipboard, empty when there is none. The
+// page pastes it into its fields: a webview keeps scripts from reading the
+// clipboard, or asks the user first.
+func (d *Desktop) ReadText() string {
+	if d.plat.ReadText == nil {
+		return ""
+	}
+	return d.plat.ReadText()
 }
 
 // Confirm asks a question in a native message box. It answers "unavailable"

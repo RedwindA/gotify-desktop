@@ -492,9 +492,11 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
 }
 
 /* The menu is portaled inside the row. Keep it the width of its items; a
-   stretched popover makes every action look like a full-width bar. */
+   stretched popover makes every action look like a full-width bar. A floor
+   keeps a menu of short labels (the fields' 剪切, 复制) from looking cramped. */
 .astryx-context-menu {
   width: max-content;
+  min-width: 120px;
   max-width: min(320px, 80vw);
 }
 

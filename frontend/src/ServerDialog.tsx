@@ -8,6 +8,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { useState } from "react";
 import { Desktop, type Server } from "./mygo";
+import { FieldMenu } from "./FieldMenu";
 import { useT, type Messages } from "./i18n";
 import { errorText } from "./store";
 
@@ -93,92 +94,94 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
         header={<DialogHeader title={title} subtitle={subtitle || undefined} onOpenChange={() => onClose()} />}
         content={
           <LayoutContent>
-            <VStack gap={4}>
-              {error && <Banner status="error" title={error} />}
-              {mode.kind !== "relogin" && (
-                <TextInput
-                  ref={plainField}
-                  label={t.serverAddress}
-                  value={url}
-                  onChange={setUrl}
-                  placeholder="https://gotify.example.com"
-                  autoComplete="off"
-                  isReadOnly={mode.kind === "edit"}
-                  hasAutoFocus={mode.kind === "add"}
-                  onEnter={submit}
-                  status={urlError ? { type: "error", message: urlError } : undefined}
-                />
-              )}
-              {mode.kind !== "relogin" && (
-                <TextInput
-                  ref={plainField}
-                  label={t.name}
-                  isOptional
-                  value={name}
-                  onChange={setName}
-                  placeholder={t.namePlaceholder}
-                  autoComplete="off"
-                  onEnter={submit}
-                />
-              )}
-              {needsLogin && (
-                <TextInput
-                  ref={plainField}
-                  label={t.username}
-                  value={user}
-                  onChange={setUser}
-                  autoComplete="off"
-                  hasAutoFocus={mode.kind === "relogin"}
-                  onEnter={submit}
-                  status={userError ? { type: "error", message: userError } : undefined}
-                />
-              )}
-              {needsLogin && (
-                <TextInput
-                  ref={plainField}
-                  label={t.password}
-                  type="password"
-                  value={pass}
-                  onChange={setPass}
-                  autoComplete="new-password"
-                  onEnter={submit}
-                  status={passError ? { type: "error", message: passError } : undefined}
-                />
-              )}
-              {mode.kind !== "relogin" && (
-                <Collapsible trigger={<Text weight="medium">{t.advanced}</Text>} defaultIsOpen={insecure || caName !== ""}>
-                  <VStack gap={3} paddingBlockStart={2}>
-                    <CheckboxInput
-                      label={t.skipTLS}
-                      description={t.skipTLSText}
-                      value={insecure}
-                      onChange={setInsecure}
-                      status={insecure ? { type: "warning", message: t.skipTLSWarning } : undefined}
-                    />
-                    <HStack gap={3} vAlign="center">
-                      <VStack gap={0.5} width="100%">
-                        <Text weight="medium">{t.caCertificate}</Text>
-                        <Text type="supporting">{caName || t.caHint}</Text>
-                      </VStack>
-                      {caName && (
-                        <Button
-                          label={t.remove}
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setCAName("");
-                            setCAPem("");
-                            setCAChanged(true);
-                          }}
-                        />
-                      )}
-                      <Button label={t.chooseFile} size="sm" onClick={chooseCA} />
-                    </HStack>
-                    {caError && <Banner status="error" title={caError} />}
-                  </VStack>
-                </Collapsible>
-              )}
-            </VStack>
+            <FieldMenu>
+              <VStack gap={4}>
+                {error && <Banner status="error" title={error} />}
+                {mode.kind !== "relogin" && (
+                  <TextInput
+                    ref={plainField}
+                    label={t.serverAddress}
+                    value={url}
+                    onChange={setUrl}
+                    placeholder="https://gotify.example.com"
+                    autoComplete="off"
+                    isReadOnly={mode.kind === "edit"}
+                    hasAutoFocus={mode.kind === "add"}
+                    onEnter={submit}
+                    status={urlError ? { type: "error", message: urlError } : undefined}
+                  />
+                )}
+                {mode.kind !== "relogin" && (
+                  <TextInput
+                    ref={plainField}
+                    label={t.name}
+                    isOptional
+                    value={name}
+                    onChange={setName}
+                    placeholder={t.namePlaceholder}
+                    autoComplete="off"
+                    onEnter={submit}
+                  />
+                )}
+                {needsLogin && (
+                  <TextInput
+                    ref={plainField}
+                    label={t.username}
+                    value={user}
+                    onChange={setUser}
+                    autoComplete="off"
+                    hasAutoFocus={mode.kind === "relogin"}
+                    onEnter={submit}
+                    status={userError ? { type: "error", message: userError } : undefined}
+                  />
+                )}
+                {needsLogin && (
+                  <TextInput
+                    ref={plainField}
+                    label={t.password}
+                    type="password"
+                    value={pass}
+                    onChange={setPass}
+                    autoComplete="new-password"
+                    onEnter={submit}
+                    status={passError ? { type: "error", message: passError } : undefined}
+                  />
+                )}
+                {mode.kind !== "relogin" && (
+                  <Collapsible trigger={<Text weight="medium">{t.advanced}</Text>} defaultIsOpen={insecure || caName !== ""}>
+                    <VStack gap={3} paddingBlockStart={2}>
+                      <CheckboxInput
+                        label={t.skipTLS}
+                        description={t.skipTLSText}
+                        value={insecure}
+                        onChange={setInsecure}
+                        status={insecure ? { type: "warning", message: t.skipTLSWarning } : undefined}
+                      />
+                      <HStack gap={3} vAlign="center">
+                        <VStack gap={0.5} width="100%">
+                          <Text weight="medium">{t.caCertificate}</Text>
+                          <Text type="supporting">{caName || t.caHint}</Text>
+                        </VStack>
+                        {caName && (
+                          <Button
+                            label={t.remove}
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setCAName("");
+                              setCAPem("");
+                              setCAChanged(true);
+                            }}
+                          />
+                        )}
+                        <Button label={t.chooseFile} size="sm" onClick={chooseCA} />
+                      </HStack>
+                      {caError && <Banner status="error" title={caError} />}
+                    </VStack>
+                  </Collapsible>
+                )}
+              </VStack>
+            </FieldMenu>
           </LayoutContent>
         }
         footer={

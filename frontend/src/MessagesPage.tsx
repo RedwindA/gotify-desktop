@@ -14,6 +14,7 @@ import { openMessageLink } from "./MessageCard";
 import { MessageRow, type SelectHow } from "./MessageRow";
 import { MessageView } from "./MessageView";
 import { Desktop, type Message, type MessagePage, type MessageRef, type Server, type State } from "./mygo";
+import { FieldMenu } from "./FieldMenu";
 import { useT } from "./i18n";
 import { statusText } from "./Sidebar";
 import { clearNavTarget, confirm, errorText, findServer, useNavTarget, useNow } from "./store";
@@ -786,20 +787,22 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     />
   );
   const searchInput = (
-    <TextInput
-      ref={searchRef}
-      label={t.searchMessages}
-      isLabelHidden
-      placeholder={t.search}
-      startIcon={SearchIcon}
-      value={search}
-      onChange={setSearch}
-      onKeyDown={onSearchKey}
-      hasClear
-      size="sm"
-      width="100%"
-      autoComplete="off"
-    />
+    <FieldMenu>
+      <TextInput
+        ref={searchRef}
+        label={t.searchMessages}
+        isLabelHidden
+        placeholder={t.search}
+        startIcon={SearchIcon}
+        value={search}
+        onChange={setSearch}
+        onKeyDown={onSearchKey}
+        hasClear
+        size="sm"
+        width="100%"
+        autoComplete="off"
+      />
+    </FieldMenu>
   );
 
   // A wide page gives each pane its own bar in the title-bar row, the way mail

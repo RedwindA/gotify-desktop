@@ -10,6 +10,7 @@ import { chromium } from "playwright-core";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const cdp = process.env.WEBVIEW_CDP;
+const isMac = process.platform === "darwin";
 let preview: ReturnType<typeof spawn> | undefined;
 let exited: Promise<void> | undefined;
 let temp: string | undefined;
@@ -57,19 +58,17 @@ try {
   });
   try {
     assert.equal(await page.locator("body").evaluate((el) => !el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }))), true, "blank space must suppress the native menu");
-    const input = page.locator("input").first();
-    assert.equal(await input.evaluate((el) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }))), true, "text fields must keep their native menu");
-    // Cover textarea and nested editable content, including a non-editable island.
+    // Text fields, editable content and form controls get no webview menu either.
     assert.deepEqual(await page.evaluate(() => {
       const area = document.createElement("textarea");
       const editable = document.createElement("div");
       editable.contentEditable = "true";
-      editable.innerHTML = '<span>editable</span><span contenteditable="false">static</span>';
+      editable.innerHTML = "<span>editable</span>";
       document.body.append(area, editable);
-      const allowed = [area, editable.firstElementChild!, editable.lastElementChild!].map(el => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+      const shown = [area, editable.firstElementChild!].map(el => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
       area.remove(); editable.remove();
-      return allowed;
-    }), [true, true, false]);
+      return shown;
+    }), [false, false], "fields outside a FieldMenu must suppress the native menu too");
     const cards = page.locator("[data-key]");
     const card = cards.first();
     // The open row menu is the one inside the list. The reading pane has a context menu of its own.
@@ -124,10 +123,56 @@ try {
     await page.keyboard.press("Shift+F10");
     await copyAll.waitFor();
     await page.keyboard.press("Escape");
+
+    // The search field has the app's edit menu, with the clipboard through the desktop.
+    if (!cdp) await page.evaluate(() => (window as any).__restoreCopy());
+    const clipboard = () => page.evaluate(() => (window as any).mygo.call("Desktop.ReadText") as Promise<string>);
+    const search = page.getByRole("textbox", { name: /^(Search messages|搜索消息)$/ });
+    const editMenu = page.getByRole("menu", { name: /^(Edit|编辑)$/ });
+    const item = (name: RegExp) => editMenu.getByRole("menuitem", { name });
+    const cut = item(/^(Cut|剪切)$/), copy = item(/^(Copy|复制)$/), paste = item(/^(Paste|粘贴)$/), selectAll = item(/^(Select all|全选)$/);
+    const disabled = (l: typeof cut) => l.evaluate((el) => el.getAttribute("aria-disabled") === "true");
+    const openFieldMenu = async (start: number, end: number) => {
+      await search.focus();
+      await search.evaluate((el: HTMLInputElement, [a, b]) => el.setSelectionRange(a, b), [start, end]);
+      await page.keyboard.press("Shift+F10");
+      await editMenu.waitFor();
+    };
+    assert.equal(await search.evaluate((el) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }))), false, "the search field must not show the webview's menu");
+    await editMenu.waitFor();
+    await page.keyboard.press("Escape");
+    await search.fill("");
+    await openFieldMenu(0, 0);
+    assert.deepEqual([await disabled(cut), await disabled(copy), await disabled(paste), await disabled(selectAll)], [true, true, false, true], "an empty field offers Paste only");
+    await page.keyboard.press("Escape");
+    await search.fill("disk usage");
+    await openFieldMenu(0, 4);
+    await copy.click();
+    assert.equal(await clipboard(), "disk", "Copy puts the selection on the clipboard");
+    await openFieldMenu(4, 10);
+    await cut.click();
+    await page.waitForFunction(() => (document.activeElement as HTMLInputElement | null)?.value === "disk");
+    assert.equal(await clipboard(), " usage", "Cut puts the selection on the clipboard");
+    await openFieldMenu(0, 4);
+    await selectAll.click();
+    assert.deepEqual(await search.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]), [0, 4], "Select all selects the whole field");
+    // Paste replaces the selection and reaches React: the list follows the search.
+    await page.evaluate(() => (window as any).mygo.call("Desktop.CopyText", "CPU temp\nerature"));
+    await openFieldMenu(0, 4);
+    await paste.click();
+    await page.waitForFunction(() => (document.activeElement as HTMLInputElement | null)?.value === "CPU temp erature");
+    await page.evaluate(() => (window as any).mygo.call("Desktop.CopyText", "CPU"));
+    await openFieldMenu(0, 16);
+    await paste.click();
+    await page.getByRole("option").filter({ hasText: "CPU temperature normal" }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('[role="option"]').length === 1);
+    await page.keyboard.press(isMac ? "Meta+z" : "Control+z");
+    assert.equal(await search.inputValue(), "CPU temp erature", "a paste from the menu is in the field's undo history");
+    await search.fill("");
     assert.deepEqual(errors, []);
-    console.log(`PASS (${cdp ? "WebView2" : "preview"}): menu suppression, native editing, selection snapshot, stale/other-card selection, whole-message copy, reading-pane actions and Shift+F10`);
+    console.log(`PASS (${cdp ? "WebView2" : "preview"}): menu suppression, selection snapshot, stale/other-card selection, whole-message copy, reading-pane actions, Shift+F10 and the search field's edit menu`);
   } finally {
-    if (!cdp) await page.evaluate(() => { (window as any).__restoreCopy(); delete (window as any).__restoreCopy; delete (window as any).__copied; });
+    if (!cdp) await page.evaluate(() => { (window as any).__restoreCopy?.(); delete (window as any).__restoreCopy; delete (window as any).__copied; });
   }
 } finally {
   await browser?.close();

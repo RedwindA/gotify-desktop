@@ -10,6 +10,7 @@ import { Switch } from "@astryxdesign/core/Switch";
 import { Text } from "@astryxdesign/core/Text";
 import { TimeInput, type ISOTimeString } from "@astryxdesign/core/TimeInput";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { FieldMenu } from "./FieldMenu";
 import { useLang, useT } from "./i18n";
 import { Desktop, type Language, type State, type Theme } from "./mygo";
 import { errorText, refreshState, useNow, useSettings } from "./store";
@@ -151,30 +152,32 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
                 width="100%"
                 onChange={(dnd) => update({ dnd })}
               />
-              <HStack gap={3} vAlign="end">
-                <TimeInput
-                  label={t.from}
-                  hourFormat="24h"
-                  value={toTime(s.dndStart)}
-                  isDisabled={!s.dnd}
-                  width={140}
-                  onChange={(v) => {
-                    const m = toMinutes(v);
-                    if (m !== null) update({ dndStart: m });
-                  }}
-                />
-                <TimeInput
-                  label={t.to}
-                  hourFormat="24h"
-                  value={toTime(s.dndEnd)}
-                  isDisabled={!s.dnd}
-                  width={140}
-                  onChange={(v) => {
-                    const m = toMinutes(v);
-                    if (m !== null) update({ dndEnd: m });
-                  }}
-                />
-              </HStack>
+              <FieldMenu>
+                <HStack gap={3} vAlign="end">
+                  <TimeInput
+                    label={t.from}
+                    hourFormat="24h"
+                    value={toTime(s.dndStart)}
+                    isDisabled={!s.dnd}
+                    width={140}
+                    onChange={(v) => {
+                      const m = toMinutes(v);
+                      if (m !== null) update({ dndStart: m });
+                    }}
+                  />
+                  <TimeInput
+                    label={t.to}
+                    hourFormat="24h"
+                    value={toTime(s.dndEnd)}
+                    isDisabled={!s.dnd}
+                    width={140}
+                    onChange={(v) => {
+                      const m = toMinutes(v);
+                      if (m !== null) update({ dndEnd: m });
+                    }}
+                  />
+                </HStack>
+              </FieldMenu>
               <Switch
                 label={t.highBypass}
                 description={t.highBypassText}

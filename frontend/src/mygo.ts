@@ -267,6 +267,14 @@ export const Desktop = {
   pickCA(): Promise<CAFile | null> {
     return call("Desktop.PickCA");
   },
+  /**
+   * ReadText returns the text on the clipboard, empty when there is none. The
+   * page pastes it into its fields: a webview keeps scripts from reading the
+   * clipboard, or asks the user first.
+   */
+  readText(): Promise<string> {
+    return call("Desktop.ReadText");
+  },
   /** Relogin signs in to a server again after its session ended. */
   relogin(serverID: number, user: string, pass: string): Promise<void> {
     return call("Desktop.Relogin", serverID, user, pass);

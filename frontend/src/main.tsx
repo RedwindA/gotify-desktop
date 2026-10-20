@@ -13,14 +13,11 @@ import { installShell } from "./desktop";
 import { astryxMessages, useLang } from "./i18n";
 import { start, useAppState } from "./store";
 
-// Keep native editing commands in fields, and the browser menu for development.
-// Only cancel the default action: Astryx's message menus still receive the event.
+// No webview menu anywhere: text fields have the app's own (FieldMenu), and
+// development keeps the browser's. Only cancel the default action: Astryx's
+// menus still receive the event.
 if (import.meta.env.PROD) {
-  document.addEventListener("contextmenu", (event) => {
-    const target = event.target;
-    if (target instanceof HTMLElement && (target.closest("input, textarea") || target.isContentEditable)) return;
-    event.preventDefault();
-  });
+  document.addEventListener("contextmenu", (event) => event.preventDefault());
 }
 
 /** Gives Astryx's components, and the page, the language the app shows. */

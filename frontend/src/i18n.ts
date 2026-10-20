@@ -61,6 +61,11 @@ const en = {
 
   message: "Message",
   messageActions: "Message actions",
+  editActions: "Edit",
+  cut: "Cut",
+  copy: "Copy",
+  paste: "Paste",
+  selectAll: "Select all",
   copyText: "Copy text",
   copySelectedText: "Copy selected text",
   copied: "Copied",
@@ -219,6 +224,11 @@ const zh: Messages = {
 
   message: "消息",
   messageActions: "消息操作",
+  editActions: "编辑",
+  cut: "剪切",
+  copy: "复制",
+  paste: "粘贴",
+  selectAll: "全选",
   copyText: "复制文本",
   copySelectedText: "复制选中文字",
   copied: "已复制",

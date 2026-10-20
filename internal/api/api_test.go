@@ -389,6 +389,20 @@ func TestSystemAppearanceZeroWithoutPlatform(t *testing.T) {
 	}
 }
 
+func TestClipboardText(t *testing.T) {
+	_, d := start(t, NewFakeBackend(), Platform{})
+	d.CopyText("lost")
+	if got := d.ReadText(); got != "" {
+		t.Fatalf("no clipboard: read %q", got)
+	}
+	var clip string
+	_, d = start(t, NewFakeBackend(), Platform{CopyText: func(s string) { clip = s }, ReadText: func() string { return clip }})
+	d.CopyText("héllo 👋")
+	if got := d.ReadText(); got != "héllo 👋" {
+		t.Fatalf("read %q", got)
+	}
+}
+
 func TestCheckForUpdates(t *testing.T) {
 	_, d := start(t, NewFakeBackend(), Platform{})
 	if err := d.CheckForUpdates(); err == nil {
