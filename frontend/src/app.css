@@ -99,12 +99,6 @@ a {
   padding-inline: var(--spacing-5, 20px);
 }
 
-.settings-column {
-  align-self: flex-start;
-  width: 100%;
-  max-width: 760px;
-}
-
 .settings-group-title {
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
@@ -267,6 +261,13 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   overflow: hidden;
 }
 
+/* The settings title lines up with the centered column below it. The inset for
+   the window controls on the right would shift that centering, and the title
+   row has nothing on that side for them to cover. */
+.titlebar.settings-header {
+  padding-right: 0;
+}
+
 /* The strip is the title bar. On macOS it stays empty for the traffic lights;
    a left inset shifts the caption clear of controls that sit on that side. */
 .sidenav-top {
@@ -383,6 +384,18 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   flex: 0 1 220px;
   width: 220px;
   min-width: 128px;
+}
+
+/* A wide page: the list's bar is its part of the title-bar row, with the
+   divider under it lined up with the sidebar's and the reading pane's. */
+.msg-pane-bar {
+  flex: none;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.msg-list-search {
+  flex: none;
+  padding: 8px 8px 0;
 }
 
 .msg-toolbar button,
@@ -556,10 +569,21 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   background: var(--color-background-surface);
 }
 
+/* The reading pane's bar is its part of the title-bar row, under the window
+   controls that Windows draws at the top right. */
+.msg-split.is-wide .msg-view-bar {
+  box-sizing: border-box;
+  height: var(--toolbar-height);
+  padding-right: calc(8px + var(--mygo-titlebar-inset-right, 0px));
+  --app-region: drag;
+}
+
+/* The message reads in a column of comfortable line length, centered in the pane. */
 .msg-view-body {
   box-sizing: border-box;
   width: 100%;
   max-width: 768px;
+  margin-inline: auto;
   padding: 24px;
 }
 

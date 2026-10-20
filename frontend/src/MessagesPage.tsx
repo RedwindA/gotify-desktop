@@ -767,70 +767,91 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const cursor = selected || (messages[0] ? keyOf(messages[0]) : "");
   const cursorShown = rows.some((r) => String(r.key) === cursor);
 
+  const heading = (
+    <div className="msg-toolbar-text">
+      <h1 className="toolbar-title">{title}</h1>
+      <div className="toolbar-subtitle">{subtitle}</div>
+    </div>
+  );
+  const markAll = unreadCount > 0 && (
+    <Button
+      label={t.markAllRead}
+      size="sm"
+      variant="ghost"
+      isIconOnly
+      icon={<CheckCheckIcon size={16} />}
+      tooltip={t.markAllRead}
+      className="no-shrink"
+      onClick={() => void Desktop.markAllRead(serverId, appId).catch((err) => onError(errorText(err)))}
+    />
+  );
+  const searchInput = (
+    <TextInput
+      ref={searchRef}
+      label={t.searchMessages}
+      isLabelHidden
+      placeholder={t.search}
+      startIcon={SearchIcon}
+      value={search}
+      onChange={setSearch}
+      onKeyDown={onSearchKey}
+      hasClear
+      size="sm"
+      width="100%"
+      autoComplete="off"
+    />
+  );
+
+  // A wide page gives each pane its own bar in the title-bar row, the way mail
+  // apps do: the list's carries the title and the search under it, the reading
+  // pane's the message actions. A narrow page shows one pane under one toolbar.
   return (
     <Layout
       ref={setPageEl}
       className="msg-page"
       padding={0}
       header={
-        <LayoutHeader padding={0} hasDivider height="var(--toolbar-height, 48px)" className="titlebar">
-          <HStack gap={2} vAlign="center" className="msg-toolbar">
-            <MobileNavToggle label={t.openSidebar} />
-            {!wide && reading && (
-              <Button
-                label={t.back}
-                size="sm"
-                variant="ghost"
-                isIconOnly
-                icon={<ArrowLeftIcon size={16} />}
-                tooltip={t.back}
-                className="no-shrink"
-                onClick={() => {
-                  setReading(false);
-                  if (selected) setFocusKey(selected);
-                }}
-              />
-            )}
-            <div className="msg-toolbar-text">
-              <h1 className="toolbar-title">{title}</h1>
-              <div className="toolbar-subtitle">{subtitle}</div>
-            </div>
-            {unreadCount > 0 && (
-              <Button
-                label={t.markAllRead}
-                size="sm"
-                variant="ghost"
-                isIconOnly
-                icon={<CheckCheckIcon size={16} />}
-                tooltip={t.markAllRead}
-                className="no-shrink"
-                onClick={() => void Desktop.markAllRead(serverId, appId).catch((err) => onError(errorText(err)))}
-              />
-            )}
-            <div className="msg-search">
-              <TextInput
-                ref={searchRef}
-                label={t.searchMessages}
-                isLabelHidden
-                placeholder={t.search}
-                startIcon={SearchIcon}
-                value={search}
-                onChange={setSearch}
-                onKeyDown={onSearchKey}
-                hasClear
-                size="sm"
-                width="100%"
-                autoComplete="off"
-              />
-            </div>
-          </HStack>
-        </LayoutHeader>
+        wide ? undefined : (
+          <LayoutHeader padding={0} hasDivider height="var(--toolbar-height, 48px)" className="titlebar">
+            <HStack gap={2} vAlign="center" className="msg-toolbar">
+              <MobileNavToggle label={t.openSidebar} />
+              {reading && (
+                <Button
+                  label={t.back}
+                  size="sm"
+                  variant="ghost"
+                  isIconOnly
+                  icon={<ArrowLeftIcon size={16} />}
+                  tooltip={t.back}
+                  className="no-shrink"
+                  onClick={() => {
+                    setReading(false);
+                    if (selected) setFocusKey(selected);
+                  }}
+                />
+              )}
+              {heading}
+              {markAll}
+              <div className="msg-search">{searchInput}</div>
+            </HStack>
+          </LayoutHeader>
+        )
       }
       content={
         <LayoutContent padding={0} isScrollable={false} className="msg-body">
           <div className={"msg-split" + (wide ? " is-wide" : "")}>
             {showList && (
               <div className="msg-list-pane">
+                {wide && (
+                  <>
+                    <HStack gap={2} vAlign="center" className="msg-toolbar msg-pane-bar titlebar">
+                      <MobileNavToggle label={t.openSidebar} />
+                      {heading}
+                      {markAll}
+                    </HStack>
+                    <div className="msg-list-search">{searchInput}</div>
+                  </>
+                )}
                 {multi && !wide && (
                   <SelectionActions compact count={picked.size} onRead={bulkRead} onDelete={bulkDelete} onClear={clearPicked} />
                 )}
@@ -917,6 +938,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
             )}
             {showReading && (
               <div className="msg-read-pane">
+                {wide && !(selectedMsg && !multi) && <div className="msg-view-bar" />}
                 {multi ? (
                   <SelectionActions count={picked.size} compact={false} onRead={bulkRead} onDelete={bulkDelete} onClear={clearPicked} />
                 ) : selectedMsg ? (

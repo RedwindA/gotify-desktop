@@ -23,6 +23,9 @@ function toMinutes(t: string | undefined): number | null {
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
+// The settings column, centered in a wide window, with the page title over its start.
+const settingsWidth = 640;
+
 // The choices of how long messages are kept, in days; 0 is forever.
 const keepChoices = [0, 7, 30, 90, 180, 365];
 
@@ -66,8 +69,9 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
   return (
     <Layout
       padding={5}
+      contentWidth={settingsWidth}
       header={
-        <LayoutHeader padding={0} hasDivider className="titlebar">
+        <LayoutHeader padding={0} hasDivider className="titlebar settings-header">
           <HStack gap={3} vAlign="center" className="toolbar-row">
             <MobileNavToggle label={t.openSidebar} className="no-shrink" />
             <Heading level={1} className="toolbar-title">
@@ -78,7 +82,7 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
       }
       content={
         <LayoutContent>
-          <VStack gap={6} className="settings-column">
+          <VStack gap={6}>
             <Group title={t.general}>
               <Selector
                 label={t.language}
