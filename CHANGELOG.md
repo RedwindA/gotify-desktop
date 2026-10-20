@@ -2,6 +2,11 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.4
+
+- In a wide window, the message list and the reading pane each have their own title-bar row: the list shows the title, unread count and Mark all as read above the search, and the reading pane's actions sit at the top. The message is centered in the reading pane, and Settings is centered too.
+- Right-clicking the search field, the server dialog's fields or the do not disturb times shows the app's own menu with Cut, Copy, Paste and Select all, in the app's language.
+
 ## 0.3.3
 
 - On Windows, messages containing emoji show notifications again.
