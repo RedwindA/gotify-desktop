@@ -1,6 +1,6 @@
 # Changelog
 
-The section of each version is the release notes that the update window shows.
+The section of each version is used for the update window and GitHub Release notes.
 
 ## 0.3.3
 
