@@ -17,6 +17,8 @@ var windowsCreateString = windows.NewLazySystemDLL("combase.dll").NewProc("Windo
 
 // newHString counts UTF-16 code units, including both halves of surrogate
 // pairs. go-ole v1.3.0 counts runes instead, truncating XML containing emoji.
+// go-toast uses ole.NewHString internally, so only its empty warm-up Push
+// may go through it.
 func newHString(s string) (ole.HString, error) {
 	u16, err := windows.UTF16FromString(s)
 	if err != nil {
