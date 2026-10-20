@@ -5,7 +5,27 @@ package notify
 import (
 	"os"
 	"testing"
+
+	"github.com/go-ole/go-ole"
 )
+
+func TestToastHStringPreservesUnicode(t *testing.T) {
+	for _, s := range []string{
+		"",
+		"Gotify 通知",
+		buildToastXML(Notification{ID: "unicode", Title: "🔔 通知", Body: "✅ 完成 🚀 𠮷", Level: LevelNormal}),
+	} {
+		h, err := newHString(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := h.String()
+		ole.DeleteHString(h)
+		if got != s {
+			t.Errorf("WinRT string was truncated: got %q, want %q", got, s)
+		}
+	}
+}
 
 func TestToastTagsAreStableAndBounded(t *testing.T) {
 	a := toastTag("s9223372036854775807-m18446744073709551615")
@@ -20,7 +40,7 @@ func TestWinRTToastRoundTrip(t *testing.T) {
 	if os.Getenv("GOTIFY_NOTIFY_IT") != "1" {
 		t.Skip("set GOTIFY_NOTIFY_IT=1 on a Windows desktop")
 	}
-	n := Notification{ID: "gotify-backend-reliability-test", Title: "Gotify notification test", Body: "This silent test notification is removed immediately.", Level: LevelSilent}
+	n := Notification{ID: "gotify-backend-reliability-test", Title: "🔔 Gotify 通知测试", Body: "✅ This silent test notification is removed immediately. 🚀 𠮷", Level: LevelSilent}
 	const appID = "dev.gotify.desktop.notifytest"
 	notifier, err := New(appID, "Gotify notification test", t.TempDir(), nil)
 	if err != nil {

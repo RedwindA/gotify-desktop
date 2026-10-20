@@ -10,7 +10,30 @@ import (
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
+	"golang.org/x/sys/windows"
 )
+
+var windowsCreateString = windows.NewLazySystemDLL("combase.dll").NewProc("WindowsCreateString")
+
+// newHString counts UTF-16 code units, including both halves of surrogate
+// pairs. go-ole v1.3.0 counts runes instead, truncating XML containing emoji.
+func newHString(s string) (ole.HString, error) {
+	u16, err := windows.UTF16FromString(s)
+	if err != nil {
+		return 0, err
+	}
+	var h ole.HString
+	hr, _, _ := windowsCreateString.Call(
+		uintptr(unsafe.Pointer(&u16[0])),
+		uintptr(len(u16)-1),
+		uintptr(unsafe.Pointer(&h)),
+	)
+	runtime.KeepAlive(u16)
+	if int32(hr) < 0 {
+		return 0, ole.NewError(hr)
+	}
+	return h, nil
+}
 
 // These small WinRT bindings add stable toast identities and history removal,
 // which go-toast's Push does not expose. ABI definitions are from Microsoft's
@@ -45,7 +68,7 @@ func showTaggedToast(appID string, n Notification) error {
 		return err
 	}
 	defer io.Release()
-	xml, err := ole.NewHString(buildToastXML(n))
+	xml, err := newHString(buildToastXML(n))
 	if err != nil {
 		return err
 	}
@@ -68,7 +91,7 @@ func showTaggedToast(appID string, n Notification) error {
 		return err
 	}
 	defer v2.Release()
-	tag, err := ole.NewHString(toastTag(n.ID))
+	tag, err := newHString(toastTag(n.ID))
 	if err != nil {
 		return err
 	}
@@ -76,7 +99,7 @@ func showTaggedToast(appID string, n Notification) error {
 	if err := rtCall(&v2.IUnknown, 6, uintptr(tag)); err != nil {
 		return err
 	}
-	group, err := ole.NewHString("gotify")
+	group, err := newHString("gotify")
 	if err != nil {
 		return err
 	}
@@ -89,7 +112,7 @@ func showTaggedToast(appID string, n Notification) error {
 		return err
 	}
 	defer manager.Release()
-	app, err := ole.NewHString(appID)
+	app, err := newHString(appID)
 	if err != nil {
 		return err
 	}
@@ -113,17 +136,17 @@ func removeTaggedToast(appID, id string) error {
 		return err
 	}
 	defer history.Release()
-	tag, err := ole.NewHString(toastTag(id))
+	tag, err := newHString(toastTag(id))
 	if err != nil {
 		return err
 	}
 	defer ole.DeleteHString(tag)
-	app, err := ole.NewHString(appID)
+	app, err := newHString(appID)
 	if err != nil {
 		return err
 	}
 	defer ole.DeleteHString(app)
-	group, err := ole.NewHString("gotify")
+	group, err := newHString("gotify")
 	if err != nil {
 		return err
 	}
