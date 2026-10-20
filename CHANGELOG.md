@@ -2,6 +2,10 @@
 
 The section of each version is the release notes that the update window shows.
 
+## 0.3.3
+
+- On Windows, messages containing emoji show notifications again.
+
 ## 0.3.2
 
 - With the language set to follow the system, the app shows Chinese on Chinese systems again. Since 0.2.4 it showed English.
