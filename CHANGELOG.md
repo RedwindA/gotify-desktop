@@ -2,6 +2,10 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.6
+
+- Copying a message as an image a second time no longer leaves the window covered by the message.
+
 ## 0.3.5
 
 - Copy as image, in a message's menu and at the top of the reading pane, puts the message on the clipboard as a picture, for chat apps that don't show markdown or tables.
