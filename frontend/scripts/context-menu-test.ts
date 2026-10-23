@@ -124,6 +124,21 @@ try {
     await copyAll.waitFor();
     await page.keyboard.press("Escape");
 
+    // Copy as image covers the window with a stage while it runs, and takes it down
+    // again each time, for the same message too. The preview cannot capture, so its
+    // copies end in an error, which takes the stage down the same way.
+    await page.evaluate(() => {
+      (window as any).__stages = 0;
+      new MutationObserver((records) => {
+        for (const r of records) for (const n of r.addedNodes) if (n instanceof Element && n.matches(".msg-shot-stage")) (window as any).__stages++;
+      }).observe(document.body, { childList: true, subtree: true });
+    });
+    const copyImage = page.getByRole("button", { name: /^(Copy as image|复制为图片)$/ });
+    for (let i = 1; i <= 2; i++) {
+      await copyImage.click();
+      await page.waitForFunction((n) => (window as any).__stages === n && !document.querySelector(".msg-shot-stage"), i, { timeout: 10000 });
+    }
+
     // The search field has the app's edit menu, with the clipboard through the desktop.
     if (!cdp) await page.evaluate(() => (window as any).__restoreCopy());
     const clipboard = () => page.evaluate(() => (window as any).mygo.call("Desktop.ReadText") as Promise<string>);
@@ -170,7 +185,7 @@ try {
     assert.equal(await search.inputValue(), "CPU temp erature", "a paste from the menu is in the field's undo history");
     await search.fill("");
     assert.deepEqual(errors, []);
-    console.log(`PASS (${cdp ? "WebView2" : "preview"}): menu suppression, selection snapshot, stale/other-card selection, whole-message copy, reading-pane actions, Shift+F10 and the search field's edit menu`);
+    console.log(`PASS (${cdp ? "WebView2" : "preview"}): menu suppression, selection snapshot, stale/other-card selection, whole-message copy, reading-pane actions, repeated copy as image, Shift+F10 and the search field's edit menu`);
   } finally {
     if (!cdp) await page.evaluate(() => { (window as any).__restoreCopy?.(); delete (window as any).__restoreCopy; delete (window as any).__copied; });
   }
