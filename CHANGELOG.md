@@ -2,6 +2,10 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.5
+
+- Copy as image, in a message's menu and at the top of the reading pane, puts the message on the clipboard as a picture, for chat apps that don't show markdown or tables.
+
 ## 0.3.4
 
 - In a wide window, the message list and the reading pane each have their own title-bar row: the list shows the title, unread count and Mark all as read above the search, and the reading pane's actions sit at the top. The message is centered in the reading pane, and Settings is centered too.
