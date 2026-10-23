@@ -10,6 +10,7 @@ import { useToast } from "@astryxdesign/core/Toast";
 import { BellRingIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppPrefsDialog } from "./AppPrefsDialog";
+import { MessageShotStage } from "./MessageShot";
 import { MessagesPage } from "./MessagesPage";
 import { Desktop, type App as GotifyApp, type ConfirmAnswer, type Server } from "./mygo";
 import { ServerDialog, type ServerDialogMode } from "./ServerDialog";
@@ -190,6 +191,7 @@ export function App() {
         mobileNav={{ hasToggle: false, content: <Sidebar state={state} route={route} actions={actions} onAdd={openAdd} drawer /> }}>
         {page}
       </AppShell>
+      <MessageShotStage />
       {dialog && (
         <ServerDialog
           mode={dialog}

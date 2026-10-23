@@ -196,7 +196,8 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
 }
 
 /* Message images never overflow the reading pane. */
-.msg-view img {
+.msg-view img,
+.msg-shot img {
   max-width: 100%;
   height: auto;
 }
@@ -587,6 +588,25 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   max-width: 768px;
   margin-inline: auto;
   padding: 24px;
+}
+
+/* Copy as image lays the message out over the window, where Go captures it. */
+.msg-shot-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  overflow: hidden;
+  background: var(--color-background-surface);
+}
+
+.msg-shot {
+  box-sizing: border-box;
+  padding: 24px;
+  background: var(--color-background-surface);
+}
+
+.msg-shot .astryx-code-block-copy-button {
+  visibility: hidden;
 }
 
 .msg-view-title {

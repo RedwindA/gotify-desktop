@@ -9,6 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
 import { findLinks, markdownLinks } from "./links";
+import { copyMessageImage } from "./MessageShot";
 
 export function openMessageLink(href: string) {
   if (!href) return;
@@ -242,6 +243,7 @@ export function useMessageMenu(msg: Message, root: { readonly current: HTMLEleme
   const items = [
     ...(selectedText ? [{ label: t.copySelectedText, onClick: () => void Desktop.copyText(selectedText) }] : []),
     { label: t.copyText, onClick: () => void Desktop.copyText(msg.body) },
+    { label: t.copyAsImage, onClick: () => copyMessageImage(msg) },
     ...(msg.clickUrl ? [{ label: t.openLink, onClick: () => openMessageLink(msg.clickUrl) }] : []),
     ...(msg.imageUrl ? [{ label: t.openImageInBrowser, onClick: () => openMessageLink(msg.imageUrl) }] : []),
     { type: "divider" as const },

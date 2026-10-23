@@ -55,6 +55,20 @@ export interface Confirmation {
 /** ConnState is the state of a server's connection. */
 export type ConnState = "connected" | "connecting" | "backoff" | "authFailed" | "disconnected";
 
+/**
+ * ImageSlice is a part of the visible page that CaptureSlice copies into the
+ * image being assembled, in CSS pixels: the rectangle X, Y, Width, Height of
+ * a page ViewportWidth wide goes to ToY in the image.
+ */
+export interface ImageSlice {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  toY: number;
+  viewportWidth: number;
+}
+
 /** Language is a language the app can show, or "" for the system's. */
 export type Language = "" | "en" | "zh-CN";
 
@@ -207,6 +221,22 @@ export const Desktop = {
   appImage(serverID: number, appID: number): Promise<string> {
     return call("Desktop.AppImage", serverID, appID);
   },
+  /**
+   * BeginImage starts an image of width × height CSS pixels, which the page
+   * fills with CaptureSlice and puts on the clipboard with CopyImage. The page
+   * lays out what it shows that tall in slices, since only the visible page
+   * can be captured.
+   */
+  beginImage(width: number, height: number): Promise<void> {
+    return call("Desktop.BeginImage", width, height);
+  },
+  /**
+   * CaptureSlice captures the visible page and copies a slice of it into the
+   * image BeginImage started.
+   */
+  captureSlice(s: ImageSlice): Promise<void> {
+    return call("Desktop.CaptureSlice", s);
+  },
   /** CheckForUpdates checks for a newer version in the update window. */
   checkForUpdates(): Promise<void> {
     return call("Desktop.CheckForUpdates");
@@ -224,6 +254,10 @@ export const Desktop = {
    */
   confirm(c: Confirmation): Promise<ConfirmAnswer> {
     return call("Desktop.Confirm", c);
+  },
+  /** CopyImage puts the image the slices assembled on the clipboard, as a PNG. */
+  copyImage(): Promise<void> {
+    return call("Desktop.CopyImage");
   },
   /** CopyText puts text on the clipboard. */
   copyText(text: string): Promise<void> {

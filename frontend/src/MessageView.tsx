@@ -4,11 +4,12 @@ import { ContextMenu } from "@astryxdesign/core/ContextMenu";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { Timestamp } from "@astryxdesign/core/Timestamp";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, ImageIcon, Trash2Icon } from "lucide-react";
+import { CameraIcon, CheckIcon, CopyIcon, ExternalLinkIcon, ImageIcon, Trash2Icon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { MessageBody, openMessageLink, useMessageMenu } from "./MessageCard";
 import { Desktop, type App, type Message } from "./mygo";
 import { useT } from "./i18n";
+import { copyMessageImage, useMessageShot } from "./MessageShot";
 import { AppAvatar } from "./Sidebar";
 
 export interface MessageViewProps {
@@ -17,6 +18,37 @@ export interface MessageViewProps {
   serverName: string | undefined;
   deleting: boolean;
   onDelete(msg: Message): void;
+}
+
+/** A message as the reading pane shows it: its app, title, time and body. */
+export function MessageContent({ msg, app, serverName }: { msg: Message; app: App | undefined; serverName: string | undefined }) {
+  const t = useT();
+  const title = msg.title || app?.name || t.message;
+  const meta = [app?.name, serverName].filter(Boolean).join(" · ");
+  return (
+    <>
+      <HStack gap={3} vAlign="start">
+        <div className="no-shrink">
+          <AppAvatar serverId={msg.serverId} app={app} size="md" />
+        </div>
+        <VStack gap={1} className="grow">
+          <Text weight="semibold" size="lg" className="selectable msg-view-title">
+            {title}
+          </Text>
+          <HStack gap={2} vAlign="center">
+            {meta && (
+              <Text type="supporting" maxLines={1}>
+                {meta}
+              </Text>
+            )}
+            <Timestamp value={msg.date} format="date_time" className="no-shrink" />
+            {msg.priority >= 8 && <Badge variant="error" label={t.priority(msg.priority)} className="no-shrink" />}
+          </HStack>
+        </VStack>
+      </HStack>
+      <MessageBody msg={msg} title={title} />
+    </>
+  );
 }
 
 export const MessageView = memo(function MessageView({ msg, app, serverName, deleting, onDelete }: MessageViewProps) {
@@ -30,8 +62,7 @@ export const MessageView = memo(function MessageView({ msg, app, serverName, del
     const timer = setTimeout(() => setCopied(0), 1500);
     return () => clearTimeout(timer);
   }, [copied]);
-  const title = msg.title || app?.name || t.message;
-  const meta = [app?.name, serverName].filter(Boolean).join(" · ");
+  const shooting = useMessageShot() !== null;
   return (
     <div ref={root} className={"msg-view" + (deleting ? " msg-deleting" : "")}>
       <div className="msg-view-fill">
@@ -61,6 +92,16 @@ export const MessageView = memo(function MessageView({ msg, app, serverName, del
                   .catch(() => {})
               }
             />
+            <Button
+              label={t.copyAsImage}
+              size="sm"
+              variant="ghost"
+              isIconOnly
+              icon={<CameraIcon size={16} />}
+              tooltip={t.copyAsImage}
+              isDisabled={shooting}
+              onClick={() => copyMessageImage(msg)}
+            />
             {msg.imageUrl && (
               <Button
                 label={t.openImageInBrowser}
@@ -87,26 +128,7 @@ export const MessageView = memo(function MessageView({ msg, app, serverName, del
         <ContextMenu items={items} label={t.messageActions} onOpenChange={onOpenChange}>
           <div className="msg-read-scroll">
             <VStack gap={4} className="msg-view-body">
-              <HStack gap={3} vAlign="start">
-                <div className="no-shrink">
-                  <AppAvatar serverId={msg.serverId} app={app} size="md" />
-                </div>
-                <VStack gap={1} className="grow">
-                  <Text weight="semibold" size="lg" className="selectable msg-view-title">
-                    {title}
-                  </Text>
-                  <HStack gap={2} vAlign="center">
-                    {meta && (
-                      <Text type="supporting" maxLines={1}>
-                        {meta}
-                      </Text>
-                    )}
-                    <Timestamp value={msg.date} format="date_time" className="no-shrink" />
-                    {msg.priority >= 8 && <Badge variant="error" label={t.priority(msg.priority)} className="no-shrink" />}
-                  </HStack>
-                </VStack>
-              </HStack>
-              <MessageBody msg={msg} title={title} />
+              <MessageContent msg={msg} app={app} serverName={serverName} />
             </VStack>
           </div>
         </ContextMenu>
