@@ -12,11 +12,16 @@ import { errorText, findServer, useAppState } from "./store";
 /** The width of the image in CSS pixels, when the window is wider. */
 const shotWidth = 640;
 
-let current: Message | null = null;
+/** A request to copy a message as an image; each request is a new object. */
+interface Shot {
+  msg: Message;
+}
+
+let current: Shot | null = null;
 const listeners = new Set<() => void>();
 
-function setCurrent(msg: Message | null) {
-  current = msg;
+function setCurrent(shot: Shot | null) {
+  current = shot;
   for (const l of listeners) l();
 }
 
@@ -25,14 +30,14 @@ function subscribe(l: () => void) {
   return () => listeners.delete(l);
 }
 
-/** The message being copied as an image, or null. */
-export function useMessageShot(): Message | null {
+/** The request being carried out, or null. */
+export function useMessageShot(): Shot | null {
   return useSyncExternalStore(subscribe, () => current);
 }
 
 /** Copies a message to the clipboard as an image; one at a time. */
 export function copyMessageImage(msg: Message) {
-  if (!current) setCurrent(msg);
+  if (!current) setCurrent({ msg });
 }
 
 const frames = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
@@ -67,22 +72,25 @@ async function capture(card: HTMLElement) {
 
 /** Lays out the message being copied as an image over the window, and copies it. */
 export function MessageShotStage() {
-  const msg = useMessageShot();
+  const shot = useMessageShot();
   const state = useAppState();
   const toast = useToast();
   const t = useT();
   const card = useRef<HTMLDivElement>(null);
   // StrictMode runs the effect twice; one capture per request.
-  const started = useRef<Message | null>(null);
+  const started = useRef<Shot | null>(null);
   useEffect(() => {
-    if (!msg || !card.current || started.current === msg) return;
-    started.current = msg;
-    capture(card.current)
+    if (!shot || !card.current || started.current === shot) return;
+    started.current = shot;
+    // The stage covers the window, so it never stays up for long.
+    const timeout = sleep(30000).then(() => Promise.reject(new Error(t.timedOut)));
+    Promise.race([capture(card.current), timeout])
       .then(() => toast({ body: t.copiedAsImage }))
       .catch((err) => toast({ body: t.couldNotCopyImage(errorText(err)), type: "error" }))
       .finally(() => setCurrent(null));
-  }, [msg]);
-  if (!msg) return null;
+  }, [shot]);
+  if (!shot) return null;
+  const { msg } = shot;
   const server = state ? findServer(state, msg.serverId) : undefined;
   const app = server?.apps.find((a) => a.id === msg.appId);
   const serverName = state && state.servers.length > 1 ? server?.name : undefined;
