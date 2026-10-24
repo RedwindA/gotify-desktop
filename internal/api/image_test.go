@@ -5,68 +5,82 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"slices"
+	"strings"
 	"testing"
 )
 
-func TestCopyImageStitchesSlices(t *testing.T) {
-	_, d := start(t, NewFakeBackend(), Platform{})
-	if err := d.BeginImage(10, 10); err == nil {
-		t.Fatal("no capture: want an error")
-	}
-
-	// A page 20 CSS pixels wide and 4 tall at 2x, whose fill changes with every capture.
-	fills := []color.RGBA{{255, 0, 0, 255}, {0, 0, 255, 255}}
-	n := 0
-	capture := func() ([]byte, error) {
-		img := image.NewRGBA(image.Rect(0, 0, 40, 8))
-		c := fills[n%len(fills)]
-		n++
-		for y := range 8 {
-			for x := range 40 {
-				img.SetRGBA(x, y, c)
-			}
-		}
-		var buf bytes.Buffer
-		err := png.Encode(&buf, img)
-		return buf.Bytes(), err
+func TestCopyMessageImage(t *testing.T) {
+	const chartURL = "https://img.example/chart.png"
+	f := Demo(chartURL)
+	f.Images[chartURL] = DemoChart()
+	_, d := start(t, f, Platform{})
+	if err := d.CopyMessageImage(t.Context(), ImageRequest{ServerID: 1, ID: 14}); err == nil {
+		t.Fatal("no clipboard: want an error")
 	}
 	var clip []byte
-	_, d = start(t, NewFakeBackend(), Platform{CapturePage: capture, CopyImage: func(b []byte) error { clip = b; return nil }})
-	if err := d.CopyImage(); err == nil {
-		t.Fatal("nothing captured: want an error")
-	}
-	// A message 10 wide and 6 tall: 4 from the first capture, 2 from the second.
-	if err := d.BeginImage(10, 6); err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range []ImageSlice{{Width: 10, Height: 4, ViewportWidth: 20}, {Width: 10, Height: 2, ToY: 4, ViewportWidth: 20}} {
-		if err := d.CaptureSlice(s); err != nil {
+	_, d = start(t, f, Platform{CopyImage: func(b []byte) error { clip = b; return nil }})
+	copyImage := func(id uint, dark bool) image.Image {
+		t.Helper()
+		clip = nil
+		if err := d.CopyMessageImage(t.Context(), ImageRequest{ServerID: 1, ID: id, Dark: dark, Scale: 2}); err != nil {
 			t.Fatal(err)
 		}
+		img, err := png.Decode(bytes.NewReader(clip))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return img
 	}
-	if err := d.CopyImage(); err != nil {
-		t.Fatal(err)
+
+	table := copyImage(14, false)
+	if b := table.Bounds(); b.Dx() != 2*shotWidth || b.Dy() < 2*150 {
+		t.Fatalf("a table and code at 2x: %v", b)
 	}
-	img, err := png.Decode(bytes.NewReader(clip))
+	luma := func(img image.Image) uint8 { return color.GrayModel.Convert(img.At(2, 2)).(color.Gray).Y }
+	if l := luma(table); l < 200 {
+		t.Errorf("light background: luma %d", l)
+	}
+	if l := luma(copyImage(14, true)); l > 60 {
+		t.Errorf("dark background: luma %d", l)
+	}
+	short := copyImage(5, false).Bounds().Dy()
+	if short >= table.Bounds().Dy() {
+		t.Errorf("one line is %d tall, a table %d", short, table.Bounds().Dy())
+	}
+	// The image in the body and the message's own image show, once downloaded.
+	withChart, withSnapshot := copyImage(6, false).Bounds().Dy(), copyImage(8, false).Bounds().Dy()
+	delete(f.Images, chartURL)
+	delete(f.Images, demoSnapshotURL)
+	if without := copyImage(6, false).Bounds().Dy(); withChart < without+2*100 {
+		t.Errorf("the chart did not show: %d tall, %d without it", withChart, without)
+	}
+	if without := copyImage(8, false).Bounds().Dy(); withSnapshot < without+2*100 {
+		t.Errorf("the snapshot did not show: %d tall, %d without it", withSnapshot, without)
+	}
+	if err := d.CopyMessageImage(t.Context(), ImageRequest{ServerID: 1, ID: 99}); err == nil {
+		t.Error("an unknown message: want an error")
+	}
+}
+
+func TestMessageShotShowsTheBodyAlone(t *testing.T) {
+	s := &messageShot{body: "## Summary\n\n```sh\nrestic check\n```", markdown: true}
+	tt, err := s.tester()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b := img.Bounds(); b.Dx() != 20 || b.Dy() != 12 {
-		t.Fatalf("size %v, want 20x12", b)
+	texts := tt.Texts()
+	if !slices.Contains(texts, "Summary") || !slices.ContainsFunc(texts, func(s string) bool { return strings.Contains(s, "restic check") }) {
+		t.Errorf("the body is missing: %q", texts)
 	}
-	for _, p := range []struct {
-		y    int
-		want color.RGBA
-	}{{0, fills[0]}, {7, fills[0]}, {8, fills[1]}, {11, fills[1]}} {
-		if got := color.RGBAModel.Convert(img.At(19, p.y)).(color.RGBA); got != p.want {
-			t.Errorf("row %d: %v, want %v", p.y, got, p.want)
-		}
+	if slices.Contains(texts, "Copy") {
+		t.Errorf("a code block's copy button shows: %q", texts)
 	}
+}
 
-	if err := d.BeginImage(1e6, 1e6); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.CaptureSlice(ImageSlice{Width: 10, Height: 4, ViewportWidth: 20}); err == nil {
-		t.Fatal("too large: want an error")
+func TestMessageShotTooLong(t *testing.T) {
+	s := &messageShot{body: strings.Repeat("line\n\n", 40000), markdown: true, scale: 2}
+	if _, err := s.render(); err == nil {
+		t.Error("want an error")
 	}
 }

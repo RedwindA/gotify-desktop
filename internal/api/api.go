@@ -60,10 +60,8 @@ type Platform struct {
 	CopyText func(text string)
 	// ReadText returns the text on the clipboard, for the page's Paste.
 	ReadText func() string
-	// CapturePage returns a PNG of the window's visible page, and CopyImage
-	// puts a PNG on the clipboard; BeginImage needs both.
-	CapturePage func() ([]byte, error)
-	CopyImage   func(png []byte) error
+	// CopyImage puts a PNG on the clipboard, for CopyMessageImage.
+	CopyImage func(png []byte) error
 	// ImageBase is the URL under which the desktop serves ImageHandler, ending
 	// in a slash; the page loads the images of messages from there.
 	ImageBase string
@@ -399,7 +397,6 @@ type Desktop struct {
 	mu         sync.Mutex
 	pendingNav *Navigation
 	pendingCmd *Command
-	image      *pageImage
 	// settingsMu serializes settings writes, which read, change and write them.
 	settingsMu sync.Mutex
 	// settingsSeq is the sequence number of the newest settings write.

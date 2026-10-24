@@ -124,28 +124,16 @@ try {
     await copyAll.waitFor();
     await page.keyboard.press("Escape");
 
-    // Copy as image covers the window with a stage while it runs, and takes it down
-    // again each time, for the same message too. The preview cannot capture, so its
-    // copies end in an error, which takes the stage down the same way. The image is
-    // the message's body alone, without its app, title or time.
-    await page.evaluate(() => {
-      (window as any).__stages = 0;
-      (window as any).__stageHeaders = 0;
-      new MutationObserver((records) => {
-        for (const r of records)
-          for (const n of r.addedNodes)
-            if (n instanceof Element && n.matches(".msg-shot-stage")) {
-              (window as any).__stages++;
-              if (n.querySelector(".msg-view-title, time")) (window as any).__stageHeaders++;
-            }
-      }).observe(document.body, { childList: true, subtree: true });
-    });
+    // Copy as image, which Go draws, works again for the same message: each copy
+    // ends in its toast.
     const copyImage = page.getByRole("button", { name: /^(Copy as image|复制为图片)$/ });
+    const copiedToast = page.getByText(/^(Copied as an image|已复制为图片)$/);
     for (let i = 1; i <= 2; i++) {
       await copyImage.click();
-      await page.waitForFunction((n) => (window as any).__stages === n && !document.querySelector(".msg-shot-stage"), i, { timeout: 10000 });
+      await copiedToast.first().waitFor({ timeout: 10000 });
+      await copiedToast.first().waitFor({ state: "detached", timeout: 15000 });
+      await page.waitForFunction(() => !document.querySelector("[aria-label='Copy as image'][disabled], [aria-label='复制为图片'][disabled]"));
     }
-    assert.equal(await page.evaluate(() => (window as any).__stageHeaders), 0, "copy as image shows only the message's body");
 
     // The search field has the app's edit menu, with the clipboard through the desktop.
     if (!cdp) await page.evaluate(() => (window as any).__restoreCopy());

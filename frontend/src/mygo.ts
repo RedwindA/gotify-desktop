@@ -56,17 +56,14 @@ export interface Confirmation {
 export type ConnState = "connected" | "connecting" | "backoff" | "authFailed" | "disconnected";
 
 /**
- * ImageSlice is a part of the visible page that CaptureSlice copies into the
- * image being assembled, in CSS pixels: the rectangle X, Y, Width, Height of
- * a page ViewportWidth wide goes to ToY in the image.
+ * ImageRequest asks CopyMessageImage for the image of a message, drawn as
+ * the page shows: Dark in its dark appearance, Scale device pixels per DIP.
  */
-export interface ImageSlice {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  toY: number;
-  viewportWidth: number;
+export interface ImageRequest {
+  serverId: number;
+  id: number;
+  dark: boolean;
+  scale: number;
 }
 
 /** Language is a language the app can show, or "" for the system's. */
@@ -221,22 +218,6 @@ export const Desktop = {
   appImage(serverID: number, appID: number): Promise<string> {
     return call("Desktop.AppImage", serverID, appID);
   },
-  /**
-   * BeginImage starts an image of width × height CSS pixels, which the page
-   * fills with CaptureSlice and puts on the clipboard with CopyImage. The page
-   * lays out what it shows that tall in slices, since only the visible page
-   * can be captured.
-   */
-  beginImage(width: number, height: number): Promise<void> {
-    return call("Desktop.BeginImage", width, height);
-  },
-  /**
-   * CaptureSlice captures the visible page and copies a slice of it into the
-   * image BeginImage started.
-   */
-  captureSlice(s: ImageSlice): Promise<void> {
-    return call("Desktop.CaptureSlice", s);
-  },
   /** CheckForUpdates checks for a newer version in the update window. */
   checkForUpdates(): Promise<void> {
     return call("Desktop.CheckForUpdates");
@@ -255,9 +236,14 @@ export const Desktop = {
   confirm(c: Confirmation): Promise<ConfirmAnswer> {
     return call("Desktop.Confirm", c);
   },
-  /** CopyImage puts the image the slices assembled on the clipboard, as a PNG. */
-  copyImage(): Promise<void> {
-    return call("Desktop.CopyImage");
+  /**
+   * CopyMessageImage puts the body of a message on the clipboard as a PNG.
+   * Chat apps rarely render markdown, tables least of all, but every one
+   * shows an image. MyGo's native UI draws it without a window, so the
+   * window does not change while it does.
+   */
+  copyMessageImage(r: ImageRequest): Promise<void> {
+    return call("Desktop.CopyMessageImage", r);
   },
   /** CopyText puts text on the clipboard. */
   copyText(text: string): Promise<void> {

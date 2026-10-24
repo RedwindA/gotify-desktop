@@ -240,6 +240,8 @@ func main() {
 		PickCA: func(context.Context) (string, []byte, error) {
 			return "", nil, nil
 		},
+		// Copy as image succeeds, for the page's tests; the image goes nowhere.
+		CopyImage: func([]byte) error { return nil },
 		ImageBase: base + "/msgimg/",
 	})
 	ctrl.Redirect(func(s api.State) { ev.send("state", s) }, func(n api.Navigation) { ev.send("navigate", n) })

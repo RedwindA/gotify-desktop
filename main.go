@@ -88,7 +88,6 @@ func main() {
 		OpenURL:         func(u string) { mygo.Shell.OpenExternal(u) },
 		CopyText:        mygo.Clipboard.WriteText,
 		ReadText:        mygo.Clipboard.ReadText,
-		CapturePage:     d.capturePage,
 		CopyImage:       mygo.Clipboard.WriteImage,
 		ImageBase:       imageBase,
 		Confirm:         d.confirm,
@@ -270,15 +269,6 @@ func (d *desktop) window() *mygo.Window {
 		d.win = nil
 	}
 	return d.win
-}
-
-// capturePage captures the main window's page, for the page's Copy as image.
-func (d *desktop) capturePage() ([]byte, error) {
-	w := d.window()
-	if w == nil {
-		return nil, errors.New("no window")
-	}
-	return w.CapturePage()
 }
 
 func (d *desktop) onChange() {
