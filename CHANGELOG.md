@@ -2,6 +2,10 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.7
+
+- Copy as image now shows only the message itself, without the app's icon, the title or the time.
+
 ## 0.3.6
 
 - Copying a message as an image a second time no longer leaves the window covered by the message.
