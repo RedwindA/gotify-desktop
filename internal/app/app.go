@@ -915,6 +915,8 @@ func (a *App) MarkAllRead(serverID int64, appID uint) error {
 
 func (a *App) Messages(q store.MessageQuery) ([]store.StoredMessage, error) { return a.st.Messages(q) }
 
+func (a *App) MessageStats() (store.MessageStats, error) { return a.st.MessageStats() }
+
 func (a *App) KickAll() {
 	a.mu.Lock()
 	var sups []*conn.Supervisor

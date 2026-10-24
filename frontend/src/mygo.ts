@@ -118,6 +118,13 @@ export interface MessageRef {
   id: number;
 }
 
+/** MessageStats is how many messages this computer keeps and their size. */
+export interface MessageStats {
+  count: number;
+  /** Bytes is what their titles, bodies and extras take. */
+  bytes: number;
+}
+
 /** Navigation names a server, an app and a message to show; zero values widen it. */
 export interface Navigation {
   serverId: number;
@@ -267,6 +274,10 @@ export const Desktop = {
   /** MarkRead marks messages of a server read. */
   markRead(serverID: number, ids: number[]): Promise<void> {
     return call("Desktop.MarkRead", serverID, ids);
+  },
+  /** MessageStats counts the messages stored on this computer and their size. */
+  messageStats(): Promise<MessageStats> {
+    return call("Desktop.MessageStats");
   },
   /** Messages returns the newest messages that match q. */
   messages(q: Query): Promise<MessagePage> {

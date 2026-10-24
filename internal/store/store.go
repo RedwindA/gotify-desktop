@@ -626,6 +626,18 @@ func (s *Store) MarkAllRead(serverID int64, appID uint) ([]uint, error) {
 	return ids, err
 }
 
+// MessageStats is how many messages are stored and how many bytes their
+// titles, bodies and extras take.
+type MessageStats struct {
+	Count int
+	Bytes int64
+}
+
+func (s *Store) MessageStats() (st MessageStats, err error) {
+	err = s.db.QueryRow(`SELECT count(*), coalesce(sum(length(CAST(title AS BLOB))+length(CAST(message AS BLOB))+length(CAST(extras AS BLOB))),0) FROM messages`).Scan(&st.Count, &st.Bytes)
+	return
+}
+
 func (s *Store) UnreadCounts() (map[int64]map[uint]int, error) {
 	rows, err := s.db.Query(`SELECT server_id, app_id, count(*) FROM messages WHERE read=0 GROUP BY server_id, app_id`)
 	if err != nil {

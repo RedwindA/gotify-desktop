@@ -470,3 +470,20 @@ func TestSettingsEpochsRiseAboveEverySave(t *testing.T) {
 		t.Fatalf("epoch %d is not above the saved write", c)
 	}
 }
+
+func TestMessageStatsFollowDeletes(t *testing.T) {
+	f := Demo("")
+	_, d := start(t, f, Platform{})
+	before, err := d.MessageStats()
+	if err != nil || before.Count != len(f.Msgs) || before.Bytes <= 0 {
+		t.Fatalf("%+v %v", before, err)
+	}
+	m := f.Msgs[0]
+	if err := d.DeleteMessage(context.Background(), m.ServerID, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := d.MessageStats()
+	if after.Count != before.Count-1 || after.Bytes >= before.Bytes {
+		t.Fatalf("before %+v after %+v", before, after)
+	}
+}

@@ -12,7 +12,7 @@ import { TimeInput, type ISOTimeString } from "@astryxdesign/core/TimeInput";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FieldMenu } from "./FieldMenu";
 import { useLang, useT } from "./i18n";
-import { Desktop, type Language, type State, type Theme } from "./mygo";
+import { Desktop, type Language, type MessageStats, type State, type Theme } from "./mygo";
 import { errorText, refreshState, useNow, useSettings } from "./store";
 
 const repositoryURL = "https://github.com/RedwindA/gotify-desktop";
@@ -29,6 +29,18 @@ const settingsWidth = 640;
 
 // The choices of how long messages are kept, in days; 0 is forever.
 const keepChoices = [0, 7, 30, 90, 180, 365];
+
+const sizeUnits = ["byte", "kilobyte", "megabyte", "gigabyte"];
+
+// A size in bytes in the largest unit (of 1024) it reaches, like file managers show it.
+function formatSize(bytes: number, lang: string): string {
+  let i = 0;
+  while (bytes >= 1024 && i < sizeUnits.length - 1) {
+    bytes /= 1024;
+    i++;
+  }
+  return new Intl.NumberFormat(lang, { style: "unit", unit: sizeUnits[i], maximumFractionDigits: i === 0 ? 0 : 1 }).format(bytes);
+}
 
 function tomorrowMorning(): Date {
   const d = new Date();
@@ -61,6 +73,17 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
   const [testNote, setTestNote] = useState("");
   const testTimer = useRef(0);
   useEffect(() => () => window.clearTimeout(testTimer.current), []);
+  const [stats, setStats] = useState<MessageStats | null>(null);
+  useEffect(() => {
+    let current = true;
+    Desktop.messageStats().then(
+      (st) => current && setStats(st),
+      () => current && setStats(null),
+    );
+    return () => {
+      current = false;
+    };
+  }, [state.msgGen]);
   const showTestNote = () => {
     setTestNote(t.testSent);
     window.clearTimeout(testTimer.current);
@@ -214,6 +237,17 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
             </Group>
 
             <Group title={t.history}>
+              {stats && (
+                <>
+                  <HStack gap={3} vAlign="center">
+                    <Text weight="medium" className="grow">
+                      {t.storedMessages}
+                    </Text>
+                    <Text type="supporting">{t.storedSize(stats.count.toLocaleString(lang), formatSize(stats.bytes, lang), stats.count)}</Text>
+                  </HStack>
+                  <Divider />
+                </>
+              )}
               <Selector
                 label={t.keepMessages}
                 description={t.keepMessagesText}

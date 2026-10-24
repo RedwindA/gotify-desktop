@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -114,6 +115,20 @@ func (f *FakeBackend) Messages(q store.MessageQuery) ([]store.StoredMessage, err
 		out = out[:q.Limit]
 	}
 	return out, nil
+}
+
+func (f *FakeBackend) MessageStats() (store.MessageStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := store.MessageStats{Count: len(f.Msgs)}
+	for _, m := range f.Msgs {
+		st.Bytes += int64(len(m.Title) + len(m.Message.Message))
+		if len(m.Extras) > 0 {
+			b, _ := json.Marshal(m.Extras)
+			st.Bytes += int64(len(b))
+		}
+	}
+	return st, nil
 }
 
 func (f *FakeBackend) DeleteMessage(ctx context.Context, serverID int64, id uint) error {

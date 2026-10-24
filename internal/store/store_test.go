@@ -441,3 +441,16 @@ func TestCatchUpDoesNotStorePrunedMessagesAgain(t *testing.T) {
 		t.Fatal("a live message with an old date was dropped")
 	}
 }
+
+func TestMessageStatsCountBytes(t *testing.T) {
+	s, id := open(t)
+	if st, err := s.MessageStats(); err != nil || st != (MessageStats{}) {
+		t.Fatalf("empty: %+v %v", st, err)
+	}
+	m := gotify.Message{ID: 1, AppID: 1, Title: "温度", Message: "ok", Extras: map[string]any{"k": 1}, Date: time.Now()}
+	s.SaveMessages(id, []gotify.Message{m, msg(2, 1, "b")})
+	// "温度" is 6 bytes in UTF-8, {"k":1} 7; msg 2 is "b" and "body b".
+	if st, err := s.MessageStats(); err != nil || st != (MessageStats{Count: 2, Bytes: 6 + 2 + 7 + 1 + 6}) {
+		t.Fatalf("%+v %v", st, err)
+	}
+}

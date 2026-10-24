@@ -29,6 +29,8 @@ import (
 type Backend interface {
 	Snapshot() *app.Snapshot
 	Messages(q store.MessageQuery) ([]store.StoredMessage, error)
+	// MessageStats counts the stored messages and their size.
+	MessageStats() (store.MessageStats, error)
 	// DeleteMessages deletes messages of a server; those it could not delete stay.
 	DeleteMessages(ctx context.Context, serverID int64, ids []uint) error
 	// ClearMessages deletes the messages of an app, or of a server when appID is 0.
@@ -279,6 +281,13 @@ type MessagePage struct {
 	HasNewer bool `json:"hasNewer"`
 	// MsgGen is the State.MsgGen the page was read at.
 	MsgGen uint64 `json:"msgGen"`
+}
+
+// MessageStats is how many messages this computer keeps and their size.
+type MessageStats struct {
+	Count int `json:"count"`
+	// Bytes is what their titles, bodies and extras take.
+	Bytes int64 `json:"bytes"`
 }
 
 // ServerForm adds a server, edits it or signs in to it again.
@@ -576,6 +585,12 @@ func (d *Desktop) Messages(q Query) (MessagePage, error) {
 		page.Next = &store.MessageCursor{Date: m.Date, ID: m.ID, ServerID: m.ServerID}
 	}
 	return page, nil
+}
+
+// MessageStats counts the messages stored on this computer and their size.
+func (d *Desktop) MessageStats() (MessageStats, error) {
+	st, err := d.be.MessageStats()
+	return MessageStats{Count: st.Count, Bytes: st.Bytes}, err
 }
 
 func isMarkdown(extras map[string]any) bool {
