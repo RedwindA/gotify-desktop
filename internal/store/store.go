@@ -634,7 +634,7 @@ type MessageStats struct {
 }
 
 func (s *Store) MessageStats() (st MessageStats, err error) {
-	err = s.db.QueryRow(`SELECT count(*), coalesce(sum(length(CAST(title AS BLOB))+length(CAST(message AS BLOB))+length(CAST(extras AS BLOB))),0) FROM messages`).Scan(&st.Count, &st.Bytes)
+	err = s.db.QueryRow(`SELECT count(*), coalesce(sum(octet_length(title)+octet_length(message)+octet_length(extras)),0) FROM messages`).Scan(&st.Count, &st.Bytes)
 	return
 }
 
