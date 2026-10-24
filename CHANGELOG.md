@@ -2,6 +2,10 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.8
+
+- Copy as image no longer flashes the window: the app draws the picture of the message by itself.
+
 ## 0.3.7
 
 - Copy as image now shows only the message itself, without the app's icon, the title or the time.
