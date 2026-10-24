@@ -4,10 +4,10 @@
 import { useToast } from "@astryxdesign/core/Toast";
 import { VStack } from "@astryxdesign/core/Layout";
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { MessageContent } from "./MessageView";
+import { MessageBody } from "./MessageCard";
 import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
-import { errorText, findServer, useAppState } from "./store";
+import { errorText } from "./store";
 
 /** The width of the image in CSS pixels, when the window is wider. */
 const shotWidth = 640;
@@ -70,10 +70,9 @@ async function capture(card: HTMLElement) {
   await Desktop.copyImage();
 }
 
-/** Lays out the message being copied as an image over the window, and copies it. */
+/** Lays out the body of the message being copied as an image over the window, and copies it. */
 export function MessageShotStage() {
   const shot = useMessageShot();
-  const state = useAppState();
   const toast = useToast();
   const t = useT();
   const card = useRef<HTMLDivElement>(null);
@@ -91,14 +90,11 @@ export function MessageShotStage() {
   }, [shot]);
   if (!shot) return null;
   const { msg } = shot;
-  const server = state ? findServer(state, msg.serverId) : undefined;
-  const app = server?.apps.find((a) => a.id === msg.appId);
-  const serverName = state && state.servers.length > 1 ? server?.name : undefined;
   return (
     <div className="msg-shot-stage" aria-hidden>
       <div ref={card} className="msg-shot" style={{ width: Math.min(window.innerWidth, shotWidth) }}>
         <VStack gap={4}>
-          <MessageContent msg={msg} app={app} serverName={serverName} />
+          <MessageBody msg={msg} title={msg.title || t.message} />
         </VStack>
       </div>
     </div>

@@ -21,7 +21,7 @@ export interface MessageViewProps {
 }
 
 /** A message as the reading pane shows it: its app, title, time and body. */
-export function MessageContent({ msg, app, serverName }: { msg: Message; app: App | undefined; serverName: string | undefined }) {
+function MessageContent({ msg, app, serverName }: { msg: Message; app: App | undefined; serverName: string | undefined }) {
   const t = useT();
   const title = msg.title || app?.name || t.message;
   const meta = [app?.name, serverName].filter(Boolean).join(" · ");

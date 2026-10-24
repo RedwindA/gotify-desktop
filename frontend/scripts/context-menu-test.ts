@@ -126,11 +126,18 @@ try {
 
     // Copy as image covers the window with a stage while it runs, and takes it down
     // again each time, for the same message too. The preview cannot capture, so its
-    // copies end in an error, which takes the stage down the same way.
+    // copies end in an error, which takes the stage down the same way. The image is
+    // the message's body alone, without its app, title or time.
     await page.evaluate(() => {
       (window as any).__stages = 0;
+      (window as any).__stageHeaders = 0;
       new MutationObserver((records) => {
-        for (const r of records) for (const n of r.addedNodes) if (n instanceof Element && n.matches(".msg-shot-stage")) (window as any).__stages++;
+        for (const r of records)
+          for (const n of r.addedNodes)
+            if (n instanceof Element && n.matches(".msg-shot-stage")) {
+              (window as any).__stages++;
+              if (n.querySelector(".msg-view-title, time")) (window as any).__stageHeaders++;
+            }
       }).observe(document.body, { childList: true, subtree: true });
     });
     const copyImage = page.getByRole("button", { name: /^(Copy as image|复制为图片)$/ });
@@ -138,6 +145,7 @@ try {
       await copyImage.click();
       await page.waitForFunction((n) => (window as any).__stages === n && !document.querySelector(".msg-shot-stage"), i, { timeout: 10000 });
     }
+    assert.equal(await page.evaluate(() => (window as any).__stageHeaders), 0, "copy as image shows only the message's body");
 
     // The search field has the app's edit menu, with the clipboard through the desktop.
     if (!cdp) await page.evaluate(() => (window as any).__restoreCopy());
