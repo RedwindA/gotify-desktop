@@ -11,6 +11,13 @@ A receive-only desktop client for [Gotify](https://gotify.net). It sits in the t
 
 Captured on macOS with demo data and the native frosted-glass sidebar. The sidebar blends with the desktop behind the window; its appearance varies with the wallpaper and theme. [Light](docs/main-light.png) · [Dark](docs/main-dark.png)
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/main-windows-dark.png">
+  <img alt="Gotify Desktop on Windows 11 with a Mica sidebar and messages from two servers" src="docs/main-windows-light.png">
+</picture>
+
+Captured on Windows 11 with demo data. The sidebar uses the system's Mica material, which takes a tint from the wallpaper. [Light](docs/main-windows-light.png) · [Dark](docs/main-windows-dark.png)
+
 ## Why not just keep the Gotify web UI open?
 
 The web UI that ships with gotify/server is good for managing a server. It is not as good for receiving notifications on a desktop:

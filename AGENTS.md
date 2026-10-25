@@ -60,6 +60,12 @@ GOTIFY_DEMO=1 "build/darwin-arm64/Gotify Desktop.app/Contents/MacOS/Gotify Deskt
 # Keep the window focused, with no overlays, over the same wallpaper. Capture its on-screen bounds:
 # screencapture -x -R<x>,<y>,<width>,<height> docs/main-light.png
 # Repeat for main-dark.png, main-zh-light.png and main-zh-dark.png (actual bounds, not literal placeholders).
+# The Windows docs/main-windows-*.png are the same view from the screen, with Mica and the caption buttons:
+# start with GOTIFY_DEMO=1 and WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333, then over CDP
+# drop "Desktop.MarkRead" posts from chrome.webview.postMessage right away (mygo is frozen), so the 3 unread stay,
+# and set language and theme with Desktop.SetSettings. Size the window to 1100x740 by its DWM extended frame bounds,
+# bring it to the front with AttachThreadInput (an Alt press opens the app's menu loop and hangs the page),
+# and copy those bounds from the screen less the 1px translucent border.
 # Windows/macOS/Linux packages into build/ (macOS signing and .dmg need a Mac; the Windows installer needs makensis)
 go run github.com/egoist/mygo/cmd/mygo build -platform windows/amd64,windows/arm64,darwin/universal,linux/amd64 -o build
 

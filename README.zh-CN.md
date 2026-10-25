@@ -11,6 +11,13 @@
 
 截图来自 macOS 原生应用，使用演示数据，展示原生毛玻璃侧边栏。侧边栏会融合窗口后方的桌面背景，效果随壁纸和主题变化。[浅色](docs/main-zh-light.png) · [深色](docs/main-zh-dark.png)
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/main-windows-zh-dark.png">
+  <img alt="Windows 11 上的 Gotify Desktop，带 Mica 侧边栏，显示来自两个服务器的消息" src="docs/main-windows-zh-light.png">
+</picture>
+
+截图来自 Windows 11，使用演示数据。侧边栏使用系统的 Mica 材质，会带上壁纸的色调。[浅色](docs/main-windows-zh-light.png) · [深色](docs/main-windows-zh-dark.png)
+
 ## 为什么不直接开着 Gotify 网页？
 
 gotify/server 自带的 WebUI 很适合管理服务器，但用来在桌面上接收通知就不太合适：
