@@ -11,6 +11,7 @@
     "test:context-menu": "bun scripts/context-menu-test.ts",
     "test:selection": "bun scripts/selection-test.ts",
     "test:sidebar-order": "bun scripts/sidebar-order-test.ts",
+    "test:idle-animation": "bun scripts/idle-animation-test.ts",
     "screenshots": "node scripts/screenshots.ts"
   },
   "dependencies": {

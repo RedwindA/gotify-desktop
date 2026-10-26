@@ -253,6 +253,8 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(pageSize);
+  // The limit of the last load that settled: below limit, the next page is loading.
+  const [settledLimit, setSettledLimit] = useState(0);
   const [refresh, setRefresh] = useState(0);
   const [historical, setHistorical] = useState(false);
   const [page, setPage] = useState<MessagePage | null>(null);
@@ -371,7 +373,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       }
       clearNavTarget();
     };
-    void load().catch((err) => live && onError(t.couldNotLoad(errorText(err))));
+    void load()
+      .catch((err) => live && onError(t.couldNotLoad(errorText(err))))
+      .finally(() => live && setSettledLimit(limit));
     return () => {
       live = false;
     };
@@ -929,7 +933,8 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                           );
                         })}
                       </div>
-                      {hasMore && (
+                      {/* Only while it loads: an endless animation recalculates styles every frame, even out of sight. */}
+                      {hasMore && settledLimit < limit && (
                         <HStack hAlign="center" padding={4}>
                           <Spinner />
                         </HStack>
