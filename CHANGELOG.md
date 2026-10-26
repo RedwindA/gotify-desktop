@@ -2,6 +2,11 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.9
+
+- With the window open, the message list no longer keeps the CPU busy: its loading spinner shows only while the next messages load.
+- Message history in Settings shows how many messages are stored and how much space they take.
+
 ## 0.3.8
 
 - Copy as image no longer flashes the window: the app draws the picture of the message by itself.
