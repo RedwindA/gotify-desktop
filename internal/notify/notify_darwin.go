@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -36,6 +38,11 @@ const (
 	interruptActive        = 1
 	interruptTimeSensitive = 2
 
+	// UNAuthorizationStatus and UNAlertStyle.
+	statusNotDetermined = 0
+	statusDenied        = 1
+	alertStyleNone      = 0
+
 	// addTimeout bounds the wait for the system to accept a notification.
 	addTimeout = 5 * time.Second
 
@@ -44,6 +51,7 @@ const (
 
 type darwinNotifier struct {
 	supported bool
+	bundleID  string
 	center    objc.ID
 	cacheDir  string
 	act       activator
@@ -170,9 +178,8 @@ func New(appID, appName, cacheDir string, appIconPNG []byte) (Notifier, error) {
 	if cls("UNUserNotificationCenter") == 0 {
 		return n, nil
 	}
-	var bundleID objc.ID
-	withPool(func() { bundleID = send(send(cls("NSBundle"), "mainBundle"), "bundleIdentifier") })
-	if bundleID == 0 {
+	withPool(func() { n.bundleID = goString(send(send(cls("NSBundle"), "mainBundle"), "bundleIdentifier")) })
+	if n.bundleID == "" {
 		return n, nil
 	}
 	if err := os.MkdirAll(n.cacheDir, 0o755); err != nil {
@@ -195,6 +202,10 @@ func New(appID, appName, cacheDir string, appIconPNG []byte) (Notifier, error) {
 		n.catMu.Unlock()
 		// Denied, Show fails with the system's reason. A bundle's executable
 		// started directly, not through Launch Services, is always denied.
+		// The system asks once: an app that quits before the user answers, or
+		// another copy of it starting meanwhile (the one in the disk image, then
+		// the one in Applications), takes the question away and leaves the app
+		// denied, so the page shows Permission and links to SettingsURL.
 		blk := objc.NewBlock(func(_ objc.Block, granted bool, err objc.ID) {
 			if !granted {
 				log.Printf("notify: not authorized: %v", nsError(err))
@@ -209,6 +220,54 @@ func New(appID, appName, cacheDir string, appIconPNG []byte) (Notifier, error) {
 func (n *darwinNotifier) Supported() bool { return n.supported }
 
 func (n *darwinNotifier) OnActivate(fn func(string)) { n.act.set(fn) }
+
+// Permission asks the system whether the user allows the app's notifications.
+func (n *darwinNotifier) Permission() Permission {
+	if !n.supported {
+		return PermissionUnknown
+	}
+	done := make(chan Permission, 1)
+	withPool(func() {
+		blk := objc.NewBlock(func(_ objc.Block, settings objc.ID) {
+			done <- permissionOf(int(send(settings, "authorizationStatus")), int(send(settings, "alertStyle")))
+		})
+		send(n.center, "getNotificationSettingsWithCompletionHandler:", blk)
+		blk.Release()
+	})
+	select {
+	case p := <-done:
+		return p
+	case <-time.After(addTimeout):
+		return PermissionUnknown
+	}
+}
+
+func permissionOf(status, alertStyle int) Permission {
+	switch {
+	case status == statusNotDetermined:
+		return PermissionPending
+	case status == statusDenied:
+		return PermissionDenied
+	case alertStyle == alertStyleNone:
+		return PermissionQuiet
+	}
+	return PermissionGranted // authorized, provisional or ephemeral
+}
+
+// SettingsURL is the app's page of the Notifications settings; macOS 12's
+// System Preferences opens on the list of apps.
+func (n *darwinNotifier) SettingsURL() string {
+	if v, _ := syscall.Sysctl("kern.osproductversion"); n.bundleID != "" && majorVersion(v) >= 13 {
+		return "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=" + n.bundleID
+	}
+	return "x-apple.systempreferences:com.apple.preference.notifications"
+}
+
+func majorVersion(v string) int {
+	major, _, _ := strings.Cut(v, ".")
+	n, _ := strconv.Atoi(major)
+	return n
+}
 
 // Show waits for the system to accept the notification, so that a refusal,
 // such as missing authorization, is an error rather than nothing showing.

@@ -14,6 +14,7 @@ import { openMessageLink } from "./MessageCard";
 import { MessageRow, type SelectHow } from "./MessageRow";
 import { MessageView } from "./MessageView";
 import { Desktop, type Message, type MessagePage, type MessageRef, type Server, type State } from "./mygo";
+import { PermissionBanner, usePermissionProblem } from "./PermissionBanner";
 import { FieldMenu } from "./FieldMenu";
 import { useT } from "./i18n";
 import { statusText } from "./Sidebar";
@@ -765,7 +766,8 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   // Several messages selected keep a narrow window on the list, with their bar.
   const showList = wide || !reading || multi;
   const showReading = wide || (reading && !multi);
-  const showBanners = historical || troubled(scoped);
+  const permissionProblem = usePermissionProblem(false);
+  const showBanners = historical || troubled(scoped) || permissionProblem;
   const selectedMsg = messages.find((m) => keyOf(m) === selected);
   const selectedServer = selectedMsg ? findServer(state, selectedMsg.serverId) : undefined;
   const selectedApp = selectedServer?.apps.find((a) => a.id === selectedMsg!.appId);
@@ -864,6 +866,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                 )}
                 {showBanners && (
                   <div className="msg-banners">
+                    <PermissionBanner withQuiet={false} onError={onError} />
                     <ServerBanners servers={scoped} onRelogin={onRelogin} />
                     {historical && (
                       <Banner

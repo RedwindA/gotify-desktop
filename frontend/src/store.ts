@@ -1,7 +1,17 @@
 // The app state from Go, kept up to date by its events, and the page's route.
 import { isCallError } from "mygo-runtime";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Desktop, events, type Command, type Confirmation, type Navigation, type Server, type Settings, type State } from "./mygo";
+import {
+  Desktop,
+  events,
+  type Command,
+  type Confirmation,
+  type Navigation,
+  type NotificationPermission,
+  type Server,
+  type Settings,
+  type State,
+} from "./mygo";
 
 let state: State | null = null;
 const listeners = new Set<() => void>();
@@ -154,8 +164,46 @@ export function subscribeCommand(listener: (command: Command) => void) {
   };
 }
 
+// Whether the system shows the app's notifications. The user changes it in the
+// system's settings or answers the system's question outside the page, so it is
+// read again when the window gets focus, and every few seconds while pending.
+let permission: NotificationPermission = "";
+let permissionTimer = 0;
+let permissionReads = 0;
+const permissionListeners = new Set<() => void>();
+
+async function refreshPermission() {
+  window.clearTimeout(permissionTimer);
+  const read = ++permissionReads;
+  let p: NotificationPermission;
+  try {
+    p = await Desktop.notificationPermission();
+  } catch {
+    return;
+  }
+  // Reads overlap (a focus during a pending poll): only the newest counts.
+  if (read !== permissionReads) return;
+  if (p === "pending") permissionTimer = window.setTimeout(() => void refreshPermission(), 3000);
+  if (p === permission) return;
+  permission = p;
+  for (const l of permissionListeners) l();
+}
+
+/** Whether the system shows the app's notifications; "" when it has no such setting. */
+export function useNotificationPermission(): NotificationPermission {
+  return useSyncExternalStore(
+    (l) => {
+      permissionListeners.add(l);
+      return () => permissionListeners.delete(l);
+    },
+    () => permission,
+  );
+}
+
 /** Loads the state and listens to Go. Subscribing before the first render catches early events. */
 export async function start() {
+  void refreshPermission();
+  window.addEventListener("focus", () => void refreshPermission());
   events.state.on(setState);
   events.navigate.on(() => void Desktop.takeNavigation().then(navigate));
   events.command.on(() => void Desktop.takeCommand().then(dispatchCommand));

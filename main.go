@@ -93,6 +93,9 @@ func main() {
 		Confirm:         d.confirm,
 		Appearance:      d.appearance,
 		CheckForUpdates: updater.CheckForUpdates,
+
+		NotificationPermission:  d.notificationPermission,
+		NotificationSettingsURL: d.notificationSettingsURL,
 	})
 	// Before Run, so macOS never installs the default menu (it has Reload and zoom).
 	if runtime.GOOS == "darwin" {
@@ -192,6 +195,22 @@ type desktop struct {
 	locale     *string // the language last given to MyGo, on the main thread
 	menuHave   bool    // an application menu was installed for the language in menuLang
 	menuLang   string
+}
+
+// notificationPermission is whether the system shows the app's notifications.
+func (d *desktop) notificationPermission() notify.Permission {
+	if p, ok := d.notifier.(notify.Permissions); ok {
+		return p.Permission()
+	}
+	return notify.PermissionUnknown
+}
+
+// notificationSettingsURL opens the system's notification settings of the app, or is "".
+func (d *desktop) notificationSettingsURL() string {
+	if p, ok := d.notifier.(notify.Permissions); ok {
+		return p.SettingsURL()
+	}
+	return ""
 }
 
 func (d *desktop) start() {

@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FieldMenu } from "./FieldMenu";
 import { useLang, useT } from "./i18n";
 import { Desktop, type Language, type MessageStats, type State, type Theme } from "./mygo";
+import { PermissionBanner } from "./PermissionBanner";
 import { errorText, refreshState, useNow, useSettings } from "./store";
 
 const repositoryURL = "https://github.com/RedwindA/gotify-desktop";
@@ -149,6 +150,7 @@ export function SettingsPage({ state, onError }: { state: State; onError(msg: st
             </Group>
 
             <Group title={t.notifications}>
+              <PermissionBanner withQuiet onError={onError} />
               <HStack gap={3} vAlign="center" wrap="wrap">
                 <VStack gap={0.5} className="grow">
                   <Text weight="medium">{paused ? t.notificationsPaused : t.notificationsOn}</Text>

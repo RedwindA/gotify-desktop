@@ -317,6 +317,30 @@ func TestOpenURLAllowsOnlyWebAndMail(t *testing.T) {
 	}
 }
 
+func TestNotificationPermission(t *testing.T) {
+	_, d := start(t, NewFakeBackend(), Platform{})
+	if p := d.NotificationPermission(); p != PermissionUnknown {
+		t.Errorf("without a system setting: %q", p)
+	}
+	if err := d.OpenNotificationSettings(); err == nil {
+		t.Error("opened settings that are not there")
+	}
+
+	var opened []string
+	settingsURL := "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=x"
+	_, d = start(t, NewFakeBackend(), Platform{
+		NotificationPermission:  func() notify.Permission { return notify.PermissionDenied },
+		NotificationSettingsURL: func() string { return settingsURL },
+		OpenURL:                 func(u string) { opened = append(opened, u) },
+	})
+	if p := d.NotificationPermission(); p != PermissionDenied {
+		t.Errorf("permission: %q", p)
+	}
+	if err := d.OpenNotificationSettings(); err != nil || len(opened) != 1 || opened[0] != settingsURL {
+		t.Errorf("opened %q: %v", opened, err)
+	}
+}
+
 func TestPickCA(t *testing.T) {
 	name, data, err := "", []byte(nil), error(nil)
 	_, d := start(t, NewFakeBackend(), Platform{PickCA: func(context.Context) (string, []byte, error) { return name, data, err }})

@@ -74,6 +74,10 @@ type Platform struct {
 	Appearance func() Appearance
 	// CheckForUpdates opens the update window, which checks right away.
 	CheckForUpdates func()
+	// NotificationPermission asks the system whether the user allows the
+	// app's notifications; NotificationSettingsURL is where they change it.
+	NotificationPermission  func() notify.Permission
+	NotificationSettingsURL func() string
 }
 
 // StateChanged carries the new state after every change.
@@ -111,6 +115,20 @@ const (
 	ConfirmNo  ConfirmAnswer = "no"
 	// ConfirmUnavailable means there is no native message box: the page asks itself.
 	ConfirmUnavailable ConfirmAnswer = "unavailable"
+)
+
+// NotificationPermission is whether the user lets the system show the app's notifications.
+type NotificationPermission string
+
+const (
+	// PermissionUnknown is a system without such a setting, or one that did not answer.
+	PermissionUnknown NotificationPermission = ""
+	PermissionGranted NotificationPermission = "granted"
+	// PermissionPending is a system still asking the user, or yet to ask.
+	PermissionPending NotificationPermission = "pending"
+	PermissionDenied  NotificationPermission = "denied"
+	// PermissionQuiet is notifications allowed with their banners off.
+	PermissionQuiet NotificationPermission = "quiet"
 )
 
 // Material is what the window shows behind the transparent parts of the page.
@@ -806,6 +824,28 @@ func (d *Desktop) SetOpenAtLogin(on bool) error {
 
 // TestNotification shows a sample notification.
 func (d *Desktop) TestNotification() error { return d.be.Test() }
+
+// NotificationPermission reports whether the system shows the app's
+// notifications, which the user changes in the system's settings.
+func (d *Desktop) NotificationPermission() NotificationPermission {
+	if d.plat.NotificationPermission == nil {
+		return PermissionUnknown
+	}
+	return NotificationPermission(d.plat.NotificationPermission())
+}
+
+// OpenNotificationSettings opens the system's notification settings of the app.
+func (d *Desktop) OpenNotificationSettings() error {
+	u := ""
+	if d.plat.NotificationSettingsURL != nil {
+		u = d.plat.NotificationSettingsURL()
+	}
+	if u == "" || d.plat.OpenURL == nil {
+		return errors.New(i18n.T("The notification settings can't be opened here."))
+	}
+	d.plat.OpenURL(u)
+	return nil
+}
 
 // OpenURL opens an http(s) or mailto URL in the default app.
 func (d *Desktop) OpenURL(raw string) error {

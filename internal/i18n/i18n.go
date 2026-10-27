@@ -133,6 +133,7 @@ var chinese = map[string]string{
 	"This server can't reorder apps. Gotify 2.9 or later can.":                                  "此服务器不支持调整应用顺序，需要 Gotify 2.9 或更高版本。",
 	"Checking for updates is not available.":                                                    "无法检查更新。",
 	"Can't open %q.":                                                                            "无法打开 %q。",
+	"The notification settings can't be opened here.":                                           "无法在这里打开通知设置。",
 	"Copying as an image is not available.":                                                     "无法复制为图片。",
 	"The message is too long for an image.":                                                     "消息太长，无法生成图片。",
 }

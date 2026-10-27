@@ -132,6 +132,9 @@ export interface Navigation {
   messageId: number;
 }
 
+/** NotificationPermission is whether the user lets the system show the app's notifications. */
+export type NotificationPermission = "" | "granted" | "pending" | "denied" | "quiet";
+
 /** Query selects messages, newest first. */
 export interface Query {
   before: MessageCursor | null;
@@ -289,6 +292,17 @@ export const Desktop = {
    */
   moveApp(serverID: number, appID: number, beforeAppID: number): Promise<void> {
     return call("Desktop.MoveApp", serverID, appID, beforeAppID);
+  },
+  /**
+   * NotificationPermission reports whether the system shows the app's
+   * notifications, which the user changes in the system's settings.
+   */
+  notificationPermission(): Promise<NotificationPermission> {
+    return call("Desktop.NotificationPermission");
+  },
+  /** OpenNotificationSettings opens the system's notification settings of the app. */
+  openNotificationSettings(): Promise<void> {
+    return call("Desktop.OpenNotificationSettings");
   },
   /** OpenURL opens an http(s) or mailto URL in the default app. */
   openURL(raw: string): Promise<void> {

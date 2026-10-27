@@ -65,6 +65,28 @@ type Notifier interface {
 
 var ErrUnsupported = errors.New("notify: notifications are not supported here")
 
+// Permission is whether the user lets the system show the app's notifications.
+type Permission string
+
+const (
+	// PermissionUnknown is a system without such a setting, or one that did not answer.
+	PermissionUnknown Permission = ""
+	PermissionGranted Permission = "granted"
+	// PermissionPending is a system still asking the user, or yet to ask.
+	PermissionPending Permission = "pending"
+	PermissionDenied  Permission = "denied"
+	// PermissionQuiet is notifications allowed with their banners off: they
+	// go to the notification center without showing.
+	PermissionQuiet Permission = "quiet"
+)
+
+// Permissions is a Notifier whose notifications the user allows in the system's settings.
+type Permissions interface {
+	Permission() Permission
+	// SettingsURL opens the system's notification settings of the app.
+	SettingsURL() string
+}
+
 // IsActivationLaunch reports whether the process was started by Windows to
 // deliver a toast click (COM activation passes -Embedding).
 func IsActivationLaunch(args []string) bool {
