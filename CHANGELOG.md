@@ -2,6 +2,10 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.10
+
+- On macOS, when notifications are turned off for Gotify Desktop or still wait for your answer, the message list and Settings say so, with a button that opens the app's notification settings; Settings also tells when banners are off. macOS asks only once: quitting the app before answering leaves notifications off.
+
 ## 0.3.9
 
 - With the window open, the message list no longer keeps the CPU busy: its loading spinner shows only while the next messages load.
