@@ -19,7 +19,6 @@ import (
 	"github.com/egoist/mygo"
 
 	"gotify-desktop/internal/app"
-	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/store"
@@ -39,7 +38,7 @@ type Backend interface {
 	MarkAllRead(serverID int64, appID uint) error
 	AddServer(ctx context.Context, in app.ServerInput) (int64, error)
 	Relogin(ctx context.Context, serverID int64, user, pass string) error
-	UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca []byte) error
+	UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca app.CAChange) error
 	RemoveServer(ctx context.Context, serverID int64) error
 	SetSettings(s notify.Settings) error
 	SetAppPref(serverID int64, appID uint, p store.AppPref) error
@@ -154,8 +153,10 @@ type Appearance struct {
 type ConnState string
 
 const (
-	StateConnected    ConnState = "connected"
-	StateConnecting   ConnState = "connecting"
+	StateConnected  ConnState = "connected"
+	StateConnecting ConnState = "connecting"
+	// StateSyncing is connected while the messages missed meanwhile load.
+	StateSyncing      ConnState = "syncing"
 	StateBackoff      ConnState = "backoff"
 	StateAuthFailed   ConnState = "authFailed"
 	StateDisconnected ConnState = "disconnected"
@@ -315,10 +316,35 @@ type ServerForm struct {
 	User     string `json:"user"`
 	Pass     string `json:"pass"`
 	Insecure bool   `json:"insecure"`
-	// CA is a PEM CA certificate to trust; empty for none.
-	CA string `json:"ca"`
-	// KeepCA makes UpdateServer leave the server's CA certificate as it is.
-	KeepCA bool `json:"keepCA"`
+	// CA is the PEM CA certificate to trust, read only when CAAction is "set".
+	CA       string   `json:"ca"`
+	CAAction CAAction `json:"caAction"`
+}
+
+// CAAction is what a ServerForm does with the server's CA certificate.
+// When a server is added, "keep" and "remove" both mean none.
+type CAAction string
+
+const (
+	CAKeep   CAAction = "keep"
+	CASet    CAAction = "set"
+	CARemove CAAction = "remove"
+)
+
+// caChange is the change of the CA certificate the form asks for.
+func (f ServerForm) caChange() (app.CAChange, error) {
+	switch f.CAAction {
+	case CAKeep:
+		return app.CAChange{Action: app.CAKeep}, nil
+	case CARemove:
+		return app.CAChange{Action: app.CARemove}, nil
+	case CASet:
+		if !x509.NewCertPool().AppendCertsFromPEM([]byte(f.CA)) {
+			return app.CAChange{}, errors.New(i18n.T("The CA certificate is not a PEM certificate."))
+		}
+		return app.CAChange{Action: app.CASet, PEM: []byte(f.CA)}, nil
+	}
+	return app.CAChange{}, fmt.Errorf("unknown CA action %q", f.CAAction)
 }
 
 // CAFile is a CA certificate the user chose.
@@ -445,7 +471,7 @@ func (d *Desktop) State() State {
 	for _, sv := range snap.Servers {
 		out := Server{ID: sv.ID, Name: sv.Name, URL: sv.URL, Insecure: sv.Insecure, HasCA: sv.HasCA,
 			State: connState(sv.State), Error: sv.Err, Unread: sv.Unread, Apps: []App{}, AppsSortable: sv.AppsSortable}
-		if sv.State == conn.Backoff && !sv.RetryAt.IsZero() {
+		if sv.State == app.Backoff && !sv.RetryAt.IsZero() {
 			t := sv.RetryAt
 			out.RetryAt = &t
 		}
@@ -458,15 +484,19 @@ func (d *Desktop) State() State {
 	return s
 }
 
-func connState(s conn.State) ConnState {
+// connState is the state the page shows for a server. One that is unavailable
+// shows as disconnected, with the error saying why.
+func connState(s app.State) ConnState {
 	switch s {
-	case conn.Connected:
+	case app.Connected:
 		return StateConnected
-	case conn.Connecting:
+	case app.Starting, app.Connecting:
 		return StateConnecting
-	case conn.Backoff:
+	case app.Syncing:
+		return StateSyncing
+	case app.Backoff:
 		return StateBackoff
-	case conn.AuthFailed:
+	case app.AuthFailed:
 		return StateAuthFailed
 	}
 	return StateDisconnected
@@ -695,27 +725,21 @@ func (d *Desktop) AddServer(ctx context.Context, f ServerForm) (int64, error) {
 	if f.User == "" || f.Pass == "" {
 		return 0, errors.New(i18n.T("Enter your username and password."))
 	}
-	ca, err := caOf(f.CA)
+	ca, err := f.caChange()
 	if err != nil {
 		return 0, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	id, err := d.be.AddServer(ctx, app.ServerInput{Name: strings.TrimSpace(f.Name), URL: raw, User: f.User, Pass: f.Pass, Insecure: f.Insecure, CACertPEM: ca})
+	id, err := d.be.AddServer(ctx, app.ServerInput{Name: strings.TrimSpace(f.Name), URL: raw, User: f.User, Pass: f.Pass, Insecure: f.Insecure, CACertPEM: ca.PEM})
 	return id, explain(err)
 }
 
-// UpdateServer changes a server's name and TLS options.
+// UpdateServer changes a server's name, TLS options and CA certificate.
 func (d *Desktop) UpdateServer(ctx context.Context, serverID int64, f ServerForm) error {
-	var ca []byte // nil keeps the server's CA, empty removes it
-	if !f.KeepCA {
-		var err error
-		if ca, err = caOf(f.CA); err != nil {
-			return err
-		}
-		if ca == nil {
-			ca = []byte{}
-		}
+	ca, err := f.caChange()
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -925,16 +949,6 @@ func (d *Desktop) TakeCommand() *Command {
 	c := d.pendingCmd
 	d.pendingCmd = nil
 	return c
-}
-
-func caOf(pem string) ([]byte, error) {
-	if strings.TrimSpace(pem) == "" {
-		return nil, nil
-	}
-	if !x509.NewCertPool().AppendCertsFromPEM([]byte(pem)) {
-		return nil, errors.New(i18n.T("The CA certificate is not a PEM certificate."))
-	}
-	return []byte(pem), nil
 }
 
 func explain(err error) error {

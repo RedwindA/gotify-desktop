@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,9 @@ type File struct {
 // NewFile stores tokens in path, which need not exist yet.
 func NewFile(path string) *File { return &File{path: path} }
 
+// load reads the tokens. A file that does not parse can't be repaired: it is
+// moved aside to tokens.json.corrupt and the store starts empty, so its
+// servers ask to sign in again. An error reading the file may pass and is returned.
 func (f *File) load() (map[string]string, error) {
 	m := map[string]string{}
 	b, err := os.ReadFile(f.path)
@@ -38,8 +42,13 @@ func (f *File) load() (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("%s: %w", filepath.Base(f.path), err)
+	if perr := json.Unmarshal(b, &m); perr != nil {
+		name := filepath.Base(f.path)
+		if err := os.Rename(f.path, f.path+".corrupt"); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, errors.Join(perr, err))
+		}
+		log.Printf("%s does not parse, moved it to %s.corrupt: %v", name, name, perr)
+		return map[string]string{}, nil
 	}
 	return m, nil
 }

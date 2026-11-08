@@ -88,10 +88,10 @@ func TestMissingTokenNeedsLogin(t *testing.T) {
 	defer a.Close()
 	eventually(t, "the token lookup", func() bool {
 		sv, _ := a.Snapshot().Server(id)
-		return sv.State != conn.Connecting
+		return sv.State != Starting
 	})
 	sv, ok := a.Snapshot().Server(id)
-	if !ok || sv.State != conn.AuthFailed || !sv.NeedLogin || sv.Err == "" {
+	if !ok || sv.State != AuthFailed || !sv.NeedLogin || sv.Err == "" {
 		t.Fatalf("%+v", sv)
 	}
 }
@@ -129,13 +129,13 @@ func TestStartupDoesNotWaitForTheTokens(t *testing.T) {
 		t.Fatal("New waited for the tokens")
 	}
 	defer a.Close()
-	if sv, _ := a.Snapshot().Server(id); sv.State != conn.Connecting {
+	if sv, _ := a.Snapshot().Server(id); sv.State != Starting {
 		t.Fatalf("while the token store is silent: %+v", sv)
 	}
 	close(tokens.release)
 	eventually(t, "the token error", func() bool {
 		sv, _ := a.Snapshot().Server(id)
-		return sv.State == conn.Disconnected
+		return sv.State == Unavailable
 	})
 	sv, _ := a.Snapshot().Server(id)
 	if sv.NeedLogin || !strings.Contains(sv.Err, "tokens.json") {
@@ -182,7 +182,7 @@ func TestStartupWithSeveralServersOneWithoutToken(t *testing.T) {
 	wg.Wait()
 	eventually(t, "every server auth-failed", func() bool {
 		for _, id := range ids {
-			if sv, ok := a.Snapshot().Server(id); !ok || sv.State != conn.AuthFailed {
+			if sv, ok := a.Snapshot().Server(id); !ok || sv.State != AuthFailed {
 				return false
 			}
 		}
@@ -225,7 +225,7 @@ func TestReloginDoesNotClobberConcurrentEdits(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- a.Relogin(context.Background(), id, "alice", "pw") }()
 	<-entered
-	if err := a.UpdateServer(context.Background(), id, "Renamed", true, nil); err != nil {
+	if err := a.UpdateServer(context.Background(), id, "Renamed", true, CAChange{}); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -391,10 +391,10 @@ func TestServerLifecycleAgainstRealServer(t *testing.T) {
 	eventually(t, "first import and coalesced snapshot", func() bool {
 		_, init, _ := a.st.LastSeen(id)
 		sv, _ := a.Snapshot().Server(id)
-		return init && sv.State == conn.Connected && len(sv.Apps) > 0 && sv.Unread == 2
+		return init && sv.State == Connected && len(sv.Apps) > 0 && sv.Unread == 2
 	})
 	sv, _ := a.Snapshot().Server(id)
-	if sv.Name == "" || sv.State != conn.Connected || len(sv.Apps) == 0 || sv.Unread != 2 {
+	if sv.Name == "" || sv.State != Connected || len(sv.Apps) == 0 || sv.Unread != 2 {
 		t.Fatalf("%+v", sv)
 	}
 	if fn.count() != 0 {
@@ -436,14 +436,14 @@ func TestServerLifecycleAgainstRealServer(t *testing.T) {
 	}
 
 	srv.API("DELETE", fmt.Sprintf("/client/%d", must(a.st.Server(id)).ClientID), nil, nil)
-	eventually(t, "auth failure", func() bool { sv, _ := a.Snapshot().Server(id); return sv.State == conn.AuthFailed })
+	eventually(t, "auth failure", func() bool { sv, _ := a.Snapshot().Server(id); return sv.State == AuthFailed })
 	if err := a.Relogin(ctx, id, harness.AdminUser, "wrong"); !errors.Is(err, gotify.ErrUnauthorized) {
 		t.Fatalf("relogin with bad password: %v", err)
 	}
 	if err := a.Relogin(ctx, id, harness.AdminUser, harness.AdminPass); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "reconnect", func() bool { sv, _ := a.Snapshot().Server(id); return sv.State == conn.Connected })
+	eventually(t, "reconnect", func() bool { sv, _ := a.Snapshot().Server(id); return sv.State == Connected })
 	srv.API("POST", "/user", map[string]any{"name": "bob", "pass": "bobpass1", "admin": false}, nil)
 	err = a.Relogin(ctx, id, "bob", "bobpass1")
 	if err == nil || !strings.Contains(err.Error(), "This server was added as admin") {
@@ -452,12 +452,12 @@ func TestServerLifecycleAgainstRealServer(t *testing.T) {
 	if sv, _ := a.st.Server(id); sv.UserName != harness.AdminUser || sv.UserID == 0 {
 		t.Fatalf("user not stored: %+v", sv)
 	}
-	if err := a.UpdateServer(ctx, id, "Renamed", false, nil); err != nil {
+	if err := a.UpdateServer(ctx, id, "Renamed", false, CAChange{}); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "rename and reconnect", func() bool {
 		sv, _ := a.Snapshot().Server(id)
-		return sv.Name == "Renamed" && sv.State == conn.Connected
+		return sv.Name == "Renamed" && sv.State == Connected
 	})
 
 	if err := a.RemoveServer(ctx, id); err != nil {

@@ -52,7 +52,8 @@ func fast() conn.Config {
 func (e *env) waitReady(t *testing.T, from int) int {
 	t.Helper()
 	_, n := e.rec.wait(t, from, state(conn.Connected))
-	_, n = e.rec.wait(t, n, func(ev conn.Event) bool { return ev.Kind == conn.EventApps })
+	// The apps arrive before Connected, which follows the catch-up.
+	e.rec.wait(t, from, func(ev conn.Event) bool { return ev.Kind == conn.EventApps })
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if _, init, _ := e.st.LastSeen(e.sid); init {
 			return n

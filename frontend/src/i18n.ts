@@ -26,6 +26,7 @@ const en = {
 
   connected: "Connected",
   connecting: "Connecting…",
+  syncing: "Syncing…",
   retryingIn: (s: number) => `Retrying in ${s}s`,
   signInAgainStatus: "Sign in again",
   disconnected: "Disconnected",
@@ -201,6 +202,7 @@ const zh: Messages = {
 
   connected: "已连接",
   connecting: "正在连接…",
+  syncing: "正在同步…",
   retryingIn: (s) => `${s} 秒后重试`,
   signInAgainStatus: "需要重新登录",
   disconnected: "未连接",

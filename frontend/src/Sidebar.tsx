@@ -38,6 +38,8 @@ export function statusText(t: Messages, sv: Server, now: number): string {
       return t.connected;
     case "connecting":
       return t.connecting;
+    case "syncing":
+      return t.syncing;
     case "backoff": {
       const wait = sv.retryAt ? Math.max(0, Math.round((Date.parse(sv.retryAt) - now) / 1000)) : 0;
       return t.retryingIn(wait) + (sv.error ? ` — ${sv.error}` : "");
@@ -48,13 +50,14 @@ export function statusText(t: Messages, sv: Server, now: number): string {
   return sv.error || t.disconnected;
 }
 
-const dotVariant = { connected: "success", connecting: "warning", backoff: "warning", authFailed: "error", disconnected: "neutral" } as const;
+const dotVariant = { connected: "success", connecting: "warning", syncing: "success", backoff: "warning", authFailed: "error", disconnected: "neutral" } as const;
 
 function ServerStatus({ sv }: { sv: Server }) {
   const now = useNow(1000);
   const t = useT();
   const text = statusText(t, sv, now);
-  return <StatusDot variant={dotVariant[sv.state]} label={text} tooltip={text} isPulsing={sv.state === "connecting"} />;
+  const busy = sv.state === "connecting" || sv.state === "syncing";
+  return <StatusDot variant={dotVariant[sv.state]} label={text} tooltip={text} isPulsing={busy} />;
 }
 
 export function AppAvatar({ serverId, app, size }: { serverId: number; app: App | undefined; size: "xsm" | "sm" | "md" }) {

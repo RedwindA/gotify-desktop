@@ -62,6 +62,7 @@ func NewDispatcher(n Notifier, st *store.Store, settings func() Settings, cacheD
 		n: n, st: st, settings: settings, cacheDir: cacheDir, http: httpc, planner: NewPlanner(),
 		wake: make(chan struct{}, 1), done: make(chan struct{}), ctx: ctx, cancel: cancel, icons: map[string]string{},
 	}
+	d.planner.unread = d.unread
 	pruneDir(filepath.Join(cacheDir, "images"), imageKeepFor)
 	go d.run()
 	return d
@@ -104,13 +105,19 @@ func (d *Dispatcher) Close() {
 	<-d.done
 }
 
+// run handles the queued events, and flushes the planner when a burst
+// summary's quiet update is due.
 func (d *Dispatcher) run() {
 	defer close(d.done)
+	flush := time.NewTimer(0)
+	flush.Stop()
 	for {
 		select {
 		case <-d.ctx.Done():
 			return
 		case <-d.wake:
+		case <-flush.C:
+			d.flush()
 		}
 		for d.ctx.Err() == nil {
 			d.mu.Lock()
@@ -123,18 +130,43 @@ func (d *Dispatcher) run() {
 			d.mu.Unlock()
 			d.process(ev)
 		}
+		if at, ok := d.planner.NextFlush(d.settings()); ok {
+			flush.Reset(time.Until(at))
+		} else {
+			flush.Stop()
+		}
 	}
 }
 
-func (d *Dispatcher) process(ev conn.Event) {
-	storedApps, err := d.st.Apps(ev.ServerID)
+// flush shows the quiet updates of burst summaries that are due.
+func (d *Dispatcher) flush() {
+	for _, p := range d.planner.Flush(d.settings(), time.Now()) {
+		apps, err := d.apps(p.ServerID)
+		if err != nil {
+			log.Printf("notify: %v", err)
+			continue
+		}
+		d.show(p, apps)
+	}
+}
+
+func (d *Dispatcher) apps(serverID int64) (map[uint]store.App, error) {
+	storedApps, err := d.st.Apps(serverID)
 	if err != nil {
-		log.Printf("notify: %v", err)
-		return
+		return nil, err
 	}
 	apps := make(map[uint]store.App, len(storedApps))
 	for _, a := range storedApps {
 		apps[a.ID] = a
+	}
+	return apps, nil
+}
+
+func (d *Dispatcher) process(ev conn.Event) {
+	apps, err := d.apps(ev.ServerID)
+	if err != nil {
+		log.Printf("notify: %v", err)
+		return
 	}
 	prefs := map[uint]AppPrefs{}
 	for _, m := range ev.Messages {
@@ -157,31 +189,42 @@ func (d *Dispatcher) process(ev conn.Event) {
 		return
 	}
 	ev.Messages = fresh
+	// Plan also returns the updates due of other servers' bursts, which show
+	// with the icons of their own server's apps.
+	appsOf := map[int64]map[uint]store.App{ev.ServerID: apps}
 	for _, p := range d.planner.Plan(ev, apps, prefs, d.settings(), time.Now()) {
-		if d.ctx.Err() != nil {
-			return
+		pa, ok := appsOf[p.ServerID]
+		if !ok {
+			if pa, err = d.apps(p.ServerID); err != nil {
+				log.Printf("notify: %v", err)
+				continue
+			}
+			appsOf[p.ServerID] = pa
 		}
-		if !d.stillRelevant(p) {
-			continue
-		}
-		n := p.Notification
-		if a, ok := apps[p.AppID]; ok && p.AppID != 0 {
-			n.IconPath = d.writeIcon(ev.ServerID, a)
-		}
-		if p.ImageURL != "" {
-			n.ImagePath = d.downloadImage(p.ImageURL)
-		}
-		if d.ctx.Err() != nil || !d.stillRelevant(p) {
-			continue
-		}
-		if err := d.n.Show(n); err != nil {
-			log.Printf("notify: show %s: %v", n.ID, err)
-		}
+		d.show(p, pa)
 	}
 }
 
-// stillRelevant re-checks the store: a message deleted or read while the
-// notification waited is not shown, nor is a summary of a removed server.
+// show shows p, with the icon of its app among apps.
+func (d *Dispatcher) show(p Planned, apps map[uint]store.App) {
+	if d.ctx.Err() != nil || !d.stillRelevant(p) {
+		return
+	}
+	n := p.Notification
+	if a, ok := apps[p.AppID]; ok && p.AppID != 0 {
+		n.IconPath = d.writeIcon(p.ServerID, a)
+	}
+	if p.ImageURL != "" {
+		n.ImagePath = d.downloadImage(p.ImageURL)
+	}
+	if d.ctx.Err() != nil || !d.stillRelevant(p) {
+		return
+	}
+	if err := d.n.Show(n); err != nil {
+		log.Printf("notify: show %s: %v", n.ID, err)
+	}
+}
+
 // pending reports whether a message is still stored and unread.
 func (d *Dispatcher) pending(serverID int64, id uint) bool {
 	msgs, err := d.st.Messages(store.MessageQuery{ServerID: serverID, ID: id, Limit: 1})
@@ -195,15 +238,24 @@ func (d *Dispatcher) stillRelevant(p Planned) bool {
 	case p.MessageID != 0:
 		return d.pending(p.ServerID, p.MessageID)
 	case len(p.MessageIDs) > 0:
-		for _, id := range p.MessageIDs {
-			if d.pending(p.ServerID, id) {
-				return true
-			}
-		}
-		return false
+		return len(d.unread(p.ServerID, p.MessageIDs)) > 0
 	}
 	_, err := d.st.Server(p.ServerID)
 	return err == nil
+}
+
+// unread keeps those of ids whose messages are still stored and unread, in
+// their order, in one query.
+func (d *Dispatcher) unread(serverID int64, ids []uint) []uint {
+	left, err := d.st.Unread(serverID, ids)
+	if err != nil {
+		log.Printf("notify: %v", err)
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(id uint) bool {
+		_, found := slices.BinarySearch(left, id)
+		return !found
+	})
 }
 
 func imageExt(data []byte) string {

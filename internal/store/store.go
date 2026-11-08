@@ -626,6 +626,16 @@ func (s *Store) MarkAllRead(serverID int64, appID uint) ([]uint, error) {
 	return ids, err
 }
 
+// Unread returns those of ids whose messages are stored and unread, ascending.
+// The ids go in as one JSON array, so their number has no limit.
+func (s *Store) Unread(serverID int64, ids []uint) ([]uint, error) {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	return txIDs(s.db, `SELECT id FROM messages WHERE server_id=? AND read=0 AND id IN (SELECT value FROM json_each(?)) ORDER BY id`, serverID, string(b))
+}
+
 // MessageStats is how many messages are stored and how many bytes their
 // titles, bodies and extras take.
 type MessageStats struct {

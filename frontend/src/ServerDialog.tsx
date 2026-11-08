@@ -22,6 +22,9 @@ function plainField(el: HTMLInputElement | null) {
 
 export type ServerDialogMode = { kind: "add" } | { kind: "edit"; server: Server } | { kind: "relogin"; server: Server };
 
+/** The CA certificate the form ends with: the server's as it is, a file chosen, or none. */
+type CAState = { kind: "keep"; name: string } | { kind: "set"; name: string; pem: string } | { kind: "remove" };
+
 const titles = (t: Messages): Record<ServerDialogMode["kind"], [title: string, subtitle: string, action: string]> => ({
   add: [t.addServerTitle, t.addServerSubtitle, t.connect],
   edit: [t.editServerTitle, "", t.save],
@@ -37,9 +40,8 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [insecure, setInsecure] = useState(sv?.insecure ?? false);
-  const [caName, setCAName] = useState(sv?.hasCA ? t.customCA : "");
-  const [caPem, setCAPem] = useState("");
-  const [caChanged, setCAChanged] = useState(false);
+  const [ca, setCA] = useState<CAState>(sv ? { kind: "keep", name: sv.hasCA ? t.customCA : "" } : { kind: "remove" });
+  const caName = ca.kind === "remove" ? "" : ca.name;
   const [caError, setCAError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,7 +60,7 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
     setBusy(true);
     setError("");
     try {
-      const form = { name, url, user, pass, insecure, ca: caPem, keepCA: !caChanged };
+      const form = { name, url, user, pass, insecure, ca: ca.kind === "set" ? ca.pem : "", caAction: ca.kind };
       if (mode.kind === "add") await onDone(await Desktop.addServer(form));
       else if (mode.kind === "edit") {
         await Desktop.updateServer(mode.server.id, form);
@@ -78,11 +80,7 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
     setCAError("");
     try {
       const f = await Desktop.pickCA();
-      if (f) {
-        setCAName(f.name);
-        setCAPem(f.pem);
-        setCAChanged(true);
-      }
+      if (f) setCA({ kind: "set", name: f.name, pem: f.pem });
     } catch (err) {
       setCAError(errorText(err));
     }
@@ -163,16 +161,7 @@ export function ServerDialog({ mode, onClose, onDone }: { mode: ServerDialogMode
                           <Text type="supporting">{caName || t.caHint}</Text>
                         </VStack>
                         {caName && (
-                          <Button
-                            label={t.remove}
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setCAName("");
-                              setCAPem("");
-                              setCAChanged(true);
-                            }}
-                          />
+                          <Button label={t.remove} variant="ghost" size="sm" onClick={() => setCA({ kind: "remove" })} />
                         )}
                         <Button label={t.chooseFile} size="sm" onClick={chooseCA} />
                       </HStack>

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import { openMessageLink } from "./MessageCard";
 import { MessageRow, type SelectHow } from "./MessageRow";
 import { MessageView } from "./MessageView";
+import { cursorOf, emptySelection, pickedOf, reduceSelection, type Selection, type SelectionAction } from "./selection";
 import { Desktop, type Message, type MessagePage, type MessageRef, type Server, type State } from "./mygo";
 import { PermissionBanner, usePermissionProblem } from "./PermissionBanner";
 import { FieldMenu } from "./FieldMenu";
@@ -34,8 +35,6 @@ const splitAt = 720;
 const isMac = /Mac/.test(navigator.userAgent);
 
 const keyOf = (m: { serverId: number; id: number }) => `${m.serverId}/${m.id}`;
-
-const noKeys: ReadonlySet<string> = new Set();
 
 /** What can be done to several messages selected: in the reading pane, or in a bar over a narrow list. */
 function SelectionActions({
@@ -262,10 +261,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const loaded = useRef<{ scope: string; gen: number; page: MessagePage; anchor: MessageRef | null } | null>(null);
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(new Set());
   const [readNow, setReadNow] = useState<ReadonlySet<string>>(new Set());
-  const [selected, setSelected] = useState("");
-  // The messages selected together, when there are several; selected is then the cursor among them.
-  const [picked, setPicked] = useState<ReadonlySet<string>>(noKeys);
-  const [reading, setReading] = useState(false);
+  const [selection, setSelection] = useState<Selection>(emptySelection);
   const [highlight, setHighlight] = useState("");
   const [scrollTo, setScrollTo] = useState("");
   const [focusKey, setFocusKey] = useState("");
@@ -274,11 +270,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const searchRef = useRef<HTMLInputElement>(null);
   const shownQuery = useRef(query);
   const messagesRef = useRef<Message[]>([]);
-  const selectedRef = useRef("");
-  const pickedRef = useRef(picked);
-  // Where a Shift selection starts: the message clicked last without Shift.
-  const anchorRef = useRef("");
-  const readingRef = useRef(false);
+  const selectionRef = useRef(selection);
   const wideRef = useRef(false);
   const deletingRef = useRef(deleting);
   const target = useNavTarget(serverId, appId);
@@ -296,10 +288,22 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   }, [pageEl]);
   const wide = pageWidth >= splitAt;
   wideRef.current = wide;
-  readingRef.current = reading;
-  selectedRef.current = selected;
-  pickedRef.current = picked;
   deletingRef.current = deleting;
+  const { reading } = selection;
+  const selected = cursorOf(selection.selected);
+  // The messages selected together, when there are several; selected is then the cursor among them.
+  const picked = pickedOf(selection.selected);
+
+  // Every change of the selection goes through here, and the effects that
+  // follow one (focus, marking read) read the selection it returns.
+  const updateSelection = useCallback((action: SelectionAction) => {
+    const next = reduceSelection(selectionRef.current, action);
+    if (next !== selectionRef.current) {
+      selectionRef.current = next;
+      setSelection(next);
+    }
+    return next;
+  }, []);
 
   // A new search starts again from the first page.
   useEffect(() => {
@@ -316,12 +320,11 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   // A notification's message shows whatever the search was, and alone.
   useEffect(() => {
     if (!target) return;
-    setPicked(noKeys);
-    anchorRef.current = "";
+    updateSelection({ type: "notified" });
     shownQuery.current = "";
     setSearch("");
     setQuery("");
-  }, [target]);
+  }, [target, updateSelection]);
 
   // Refreshes the loaded window when messages change; scrolling requests only
   // the next bounded page. Notification navigation starts at its target.
@@ -356,8 +359,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       if (target.messageId !== 0 && p.messages.some((m) => keyOf(m) === key)) {
         setScrollTo(key);
         setHighlight(key);
-        setSelected(key);
-        setReading(true);
+        updateSelection({ type: "show", key });
         const hit = p.messages.find((m) => keyOf(m) === key);
         if (hit && !hit.read) {
           setReadNow((s) => (s.has(key) ? s : new Set(s).add(key)));
@@ -380,7 +382,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     return () => {
       live = false;
     };
-  }, [serverId, appId, query, limit, state.msgGen, target, onError, t, refresh]);
+  }, [serverId, appId, query, limit, state.msgGen, target, onError, t, refresh, updateSelection]);
 
   const messages = page?.messages ?? [];
   messagesRef.current = messages;
@@ -434,24 +436,11 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     return () => clearTimeout(handle);
   }, [highlight]);
 
+  // Messages that went away leave the selection, also when the selection
+  // changed to one of them (a failed delete selects its message again).
   useEffect(() => {
-    if (!selected || !page) return;
-    if (!page.messages.some((m) => keyOf(m) === selected)) {
-      setSelected("");
-      setReading(false);
-    }
-  }, [page, selected]);
-
-  // Messages that went away leave the selection.
-  useEffect(() => {
-    if (!page || picked.size === 0) return;
-    const present = new Set(page.messages.map(keyOf));
-    const kept = [...picked].filter((k) => present.has(k));
-    if (kept.length === picked.size) return;
-    setPicked(kept.length > 1 ? new Set(kept) : noKeys);
-    // The cursor stays on a message still selected, and one left is simply selected.
-    if (kept.length === 1 || (kept.length > 1 && !present.has(selectedRef.current))) setSelected(kept[0]!);
-  }, [page, picked]);
+    if (page) updateSelection({ type: "prune", present: new Set(page.messages.map(keyOf)) });
+  }, [page, selection, updateSelection]);
 
   // Loads more when the end of the list comes near.
   const hasMore = page?.hasMore ?? false;
@@ -484,59 +473,34 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const selectMessage = useCallback(
     (m: Message, focus: boolean, how: SelectHow = "only") => {
       const k = keyOf(m);
-      if (how === "only") {
-        anchorRef.current = k;
-        setPicked(noKeys);
-        setSelected(k);
-        setReading(true);
-        markReadNow(m);
-        if (focus && wideRef.current) setFocusKey(k);
-        return;
-      }
       const msgs = messagesRef.current;
-      let next: Set<string>;
-      if (how === "toggle") {
-        const cur = selectedRef.current;
-        next = new Set(pickedRef.current.size > 0 ? pickedRef.current : cur ? [cur] : []);
-        if (next.has(k)) next.delete(k);
-        else next.add(k);
-        anchorRef.current = k;
-      } else {
-        const to = msgs.findIndex((x) => keyOf(x) === k);
-        // Without an anchor, the selection starts at the message selected, and stays anchored there.
-        anchorRef.current ||= selectedRef.current;
-        let from = msgs.findIndex((x) => keyOf(x) === anchorRef.current);
-        if (from < 0) {
-          from = to;
-          anchorRef.current = k;
-        }
-        next = new Set(msgs.slice(Math.min(from, to), Math.max(from, to) + 1).map(keyOf));
+      const wide = wideRef.current;
+      const next = updateSelection({ type: "select", key: k, how, order: msgs.map(keyOf), wide });
+      if (how === "only") {
+        markReadNow(m);
+        if (focus && wide) setFocusKey(k);
+        return;
       }
       if (focus) setFocusKey(k);
-      if (next.size > 1) {
-        setPicked(next);
-        setSelected(k);
-        if (!wideRef.current) setReading(false);
-        return;
-      }
-      // One left: it is simply selected, and read where the pane shows it.
-      setPicked(noKeys);
-      const only = msgs.find((x) => next.has(keyOf(x)));
-      setSelected(only ? keyOf(only) : "");
-      setReading(wideRef.current && !!only);
-      if (only && wideRef.current) markReadNow(only);
+      // One left is read where the pane shows it.
+      const only = next.selected.kind === "one" ? next.selected.key : "";
+      const read = wide && msgs.find((x) => keyOf(x) === only);
+      if (read) markReadNow(read);
     },
-    [markReadNow],
+    [markReadNow, updateSelection],
   );
 
   const onRowSelect = useCallback((m: Message, how: SelectHow) => selectMessage(m, true, how), [selectMessage]);
 
-  const clearPicked = useCallback(() => setPicked(noKeys), []);
+  const clearPicked = useCallback(() => void updateSelection({ type: "clear" }), [updateSelection]);
 
-  const pickedMessages = () => messagesRef.current.filter((m) => pickedRef.current.has(keyOf(m)));
+  const pickedMessages = () => {
+    const keys = pickedOf(selectionRef.current.selected);
+    return messagesRef.current.filter((m) => keys.has(keyOf(m)));
+  };
 
   const bulkRead = useCallback(() => {
-    const unread = messagesRef.current.filter((m) => pickedRef.current.has(keyOf(m)) && !m.read);
+    const unread = pickedMessages().filter((m) => !m.read);
     if (unread.length === 0) return;
     const keys = unread.map(keyOf);
     setReadNow((s) => new Set([...s, ...keys]));
@@ -567,16 +531,9 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       });
       if (!yes) return;
       const keys = new Set(msgs.map(keyOf));
-      // The cursor moves to the message after the selection, or else before it.
       // By key: a refresh while the question was open replaced the messages.
-      const listNow = messagesRef.current;
-      const last = listNow.reduce((at, m, i) => (keys.has(keyOf(m)) ? i : at), -1);
-      const rest = (m: Message) => !keys.has(keyOf(m));
-      const next = listNow.slice(last + 1).find(rest) ?? listNow.slice(0, last).reverse().find(rest);
-      setPicked(noKeys);
-      setSelected(next ? keyOf(next) : "");
-      if (next) setFocusKey(keyOf(next));
-      else setReading(false);
+      const next = cursorOf(updateSelection({ type: "deleteMany", keys, order: messagesRef.current.map(keyOf) }).selected);
+      if (next) setFocusKey(next);
       setDeleting((s) => new Set([...s, ...keys]));
       Desktop.deleteMessages(msgs.map((m) => ({ serverId: m.serverId, id: m.id })))
         .catch((err) => onError(t.couldNotDelete(errorText(err))))
@@ -588,30 +545,23 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
           }),
         );
     })();
-  }, [onError, t]);
+  }, [onError, t, updateSelection]);
 
   const onDelete = useCallback(
     (m: Message) => {
       const k = keyOf(m);
       if (deletingRef.current.has(k)) return;
-      const listNow = messagesRef.current;
-      const idx = listNow.findIndex((x) => keyOf(x) === k);
-      const neighbor = idx >= 0 ? (listNow[idx + 1] ?? listNow[idx - 1]) : undefined;
-      const nextKey = neighbor && keyOf(neighbor) !== k ? keyOf(neighbor) : "";
-      const wasSelected = selectedRef.current === k;
+      const wasSelected = cursorOf(selectionRef.current.selected) === k;
+      const nextKey = cursorOf(updateSelection({ type: "deleteOne", key: k, order: messagesRef.current.map(keyOf) }).selected);
       // The deleted row, or the reading pane's button, is about to leave the
       // page: the focus would fall to the body.
       const active = document.activeElement;
       const hadFocus = active instanceof Element && active.closest(".msg-list-pane, .msg-read-pane") !== null;
-      if (wasSelected) {
-        setSelected(nextKey);
-        if (!nextKey) setReading(false);
-        if (hadFocus && nextKey) setFocusKey(nextKey);
-      }
+      if (wasSelected && hadFocus && nextKey) setFocusKey(nextKey);
       setDeleting((s) => new Set(s).add(k));
       Desktop.deleteMessage(m.serverId, m.id)
         .catch((err) => {
-          if (wasSelected) setSelected((cur) => (cur === nextKey ? k : cur));
+          if (wasSelected) updateSelection({ type: "restore", key: k, from: nextKey });
           onError(t.couldNotDelete(errorText(err)));
         })
         .finally(() =>
@@ -623,7 +573,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
           }),
         );
     },
-    [onError, t],
+    [onError, t, updateSelection],
   );
 
   const focusSearch = useCallback(() => {
@@ -634,16 +584,16 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   }, []);
 
   const focusList = useCallback(() => {
-    setReading(false);
+    updateSelection({ type: "back" });
     const msgs = messagesRef.current;
-    const current = selectedRef.current;
+    const current = cursorOf(selectionRef.current.selected);
     const key = current && msgs.some((m) => keyOf(m) === current) ? current : msgs[0] ? keyOf(msgs[0]) : "";
     if (!key) {
       scroller?.focus();
       return;
     }
     setFocusKey(key);
-  }, [scroller]);
+  }, [scroller, updateSelection]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -671,41 +621,30 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       if (!inPage && !bare) return;
 
       if (e.key === "Escape") {
-        if (pickedRef.current.size > 0) {
-          e.preventDefault();
-          setPicked(noKeys);
-          return;
-        }
-        if (!wideRef.current && readingRef.current) {
-          e.preventDefault();
-          setReading(false);
-          const k = selectedRef.current;
-          if (k) setFocusKey(k);
-          return;
-        }
-        if (selectedRef.current) {
-          e.preventDefault();
-          setSelected("");
-        }
+        const before = selectionRef.current;
+        const after = updateSelection({ type: "escape", wide: wideRef.current });
+        if (after === before) return;
+        e.preventDefault();
+        // Leaving a narrow reading pane, the focus goes to its message in the list.
+        const k = cursorOf(after.selected);
+        if (before.reading && !after.reading && k) setFocusKey(k);
         return;
       }
 
       const msgs = messagesRef.current;
-      const current = () => msgs.find((m) => keyOf(m) === selectedRef.current);
+      const selectedKey = cursorOf(selectionRef.current.selected);
+      const current = () => msgs.find((m) => keyOf(m) === selectedKey);
       const selectAll = (isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a";
       if (selectAll && (bare || targetEl.closest(".msg-list-pane"))) {
         e.preventDefault();
-        if (msgs.length > 1) {
-          setPicked(new Set(msgs.map(keyOf)));
-          if (!wideRef.current) setReading(false);
-        }
+        updateSelection({ type: "selectAll", order: msgs.map(keyOf), wide: wideRef.current });
         return;
       }
       if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
         if (e.altKey || e.ctrlKey || e.metaKey) return;
         if (msgs.length === 0) return;
         e.preventDefault();
-        const i = selectedRef.current ? msgs.findIndex((m) => keyOf(m) === selectedRef.current) : -1;
+        const i = selectedKey ? msgs.findIndex((m) => keyOf(m) === selectedKey) : -1;
         let n = 0;
         if (e.key === "Home") n = 0;
         else if (e.key === "End") n = msgs.length - 1;
@@ -718,7 +657,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
       const macDelete = isMac && e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey && e.key === "Backspace";
       if (e.key === "Delete" || macDelete) {
         if (e.key === "Delete" && (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)) return;
-        if (pickedRef.current.size > 1) {
+        if (selectionRef.current.selected.kind === "many") {
           e.preventDefault();
           bulkDelete();
           return;
@@ -739,7 +678,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [bulkDelete, focusSearch, onDelete, pageEl, selectMessage]);
+  }, [bulkDelete, focusSearch, onDelete, pageEl, selectMessage, updateSelection]);
 
   const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
@@ -762,7 +701,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
   const unreadCount = scopeApp ? scopeApp.unread : server ? server.unread : state.unread;
   const subtitle = unreadCount > 0 ? `${t.unreadCount(unreadCount)} · ${scopeLine}` : scopeLine;
   const scoped = server ? [server] : state.servers;
-  const multi = picked.size > 1;
+  const multi = selection.selected.kind === "many";
   // Several messages selected keep a narrow window on the list, with their bar.
   const showList = wide || !reading || multi;
   const showReading = wide || (reading && !multi);
@@ -834,7 +773,7 @@ export function MessagesPage({ state, serverId, appId, onRelogin, onError }: Mes
                   tooltip={t.back}
                   className="no-shrink"
                   onClick={() => {
-                    setReading(false);
+                    updateSelection({ type: "back" });
                     if (selected) setFocusKey(selected);
                   }}
                 />

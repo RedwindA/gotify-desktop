@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppPrefsDialog } from "./AppPrefsDialog";
 import { MessageShots } from "./MessageShot";
 import { MessagesPage } from "./MessagesPage";
-import { Desktop, type App as GotifyApp, type ConfirmAnswer, type Server } from "./mygo";
+import { Desktop, type App as GotifyApp, type Command, type ConfirmAnswer, type Server } from "./mygo";
 import { ServerDialog, type ServerDialogMode } from "./ServerDialog";
 import { SettingsPage } from "./SettingsPage";
 import { Sidebar, type ServerActions } from "./Sidebar";
@@ -64,8 +64,14 @@ export function App() {
   const [prefs, setPrefs] = useState<{ serverId: number; appId: number } | null>(null);
   const [bootSlow, setBootSlow] = useState(false);
   const question = useQuestion();
-  const blocked = useRef(false);
-  blocked.current = dialog !== null || prefs !== null || removing !== null || question !== null;
+  // The notification settings show while their app is in the state.
+  const prefsServer = state && prefs ? findServer(state, prefs.serverId) : undefined;
+  const prefsApp = prefsServer?.apps.find((a) => a.id === prefs?.appId);
+  const modalOpen = dialog !== null || prefsApp !== undefined || removing !== null || question !== null;
+  const addingServer = useRef(false);
+  addingServer.current = dialog?.kind === "add";
+  // A server to add once no dialog is open.
+  const [addHeld, setAddHeld] = useState(false);
 
   const onError = useCallback((body: string) => void toast({ body, type: "error" }), [toast]);
 
@@ -75,26 +81,32 @@ export function App() {
     return () => window.clearTimeout(id);
   }, [state]);
 
-  useEffect(() => {
-    return subscribeCommand((command) => {
-      if (blocked.current) return;
-      if (command === "settings") go({ page: "settings" });
-      else if (command === "addServer") setDialog({ kind: "add" });
-    });
+  // Menu commands and their shortcuts. Settings opens at once, behind an open
+  // dialog too. Adding a server waits for an open dialog to close, unless that
+  // dialog adds a server already.
+  const runCommand = useCallback((command: Command) => {
+    if (command === "settings") go({ page: "settings" });
+    else if (!addingServer.current) setAddHeld(true);
   }, []);
+
+  useEffect(() => {
+    if (!addHeld || modalOpen) return;
+    setAddHeld(false);
+    setDialog({ kind: "add" });
+  }, [addHeld, modalOpen]);
+
+  useEffect(() => subscribeCommand(runCommand), [runCommand]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.isComposing || e.altKey || e.shiftKey || !(e.ctrlKey || e.metaKey)) return;
       if (e.key !== "," && e.key.toLowerCase() !== "n") return;
       e.preventDefault();
-      if (blocked.current) return;
-      if (e.key === ",") go({ page: "settings" });
-      else setDialog({ kind: "add" });
+      runCommand(e.key === "," ? "settings" : "addServer");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [runCommand]);
 
   // A server or app that went away leaves its page for all messages.
   useEffect(() => {
@@ -180,9 +192,6 @@ export function App() {
         onError={onError}
       />
     );
-
-  const prefsServer = state && prefs ? findServer(state, prefs.serverId) : undefined;
-  const prefsApp = prefsServer?.apps.find((a) => a.id === prefs?.appId);
 
   return (
     <>

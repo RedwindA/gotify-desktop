@@ -23,7 +23,6 @@ import (
 	"gotify-desktop/internal/api"
 	"gotify-desktop/internal/app"
 	"gotify-desktop/internal/appearance"
-	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/secret"
@@ -565,9 +564,11 @@ func (d *desktop) applyTray() {
 	d.applyTheme(snap.Settings.Theme)
 	d.applyLanguage(snap.Settings.Language)
 	d.installAppMenu()
+	// A server on its way to connecting is not offline: the tray would show it at every launch.
 	offline := false
 	for _, sv := range snap.Servers {
-		if sv.State != conn.Connected {
+		switch sv.State {
+		case app.Backoff, app.AuthFailed, app.Unavailable:
 			offline = true
 		}
 	}

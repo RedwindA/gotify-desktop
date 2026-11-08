@@ -381,6 +381,19 @@ func TestMarkAllReadReturnsTheUnread(t *testing.T) {
 	}
 }
 
+func TestUnread(t *testing.T) {
+	s, id := open(t)
+	s.SaveMessages(id, []gotify.Message{msg(1, 1, "a"), msg(2, 1, "b"), msg(3, 1, "c"), msg(4, 1, "d")})
+	s.MarkRead(id, 2)
+	s.DeleteMessage(id, 3)
+	if got, err := s.Unread(id, []uint{4, 3, 2, 1, 9}); err != nil || !reflect.DeepEqual(got, []uint{1, 4}) {
+		t.Fatalf("%v %v", got, err)
+	}
+	if got, err := s.Unread(id+1, []uint{1}); err != nil || len(got) != 0 {
+		t.Fatalf("other server: %v %v", got, err)
+	}
+}
+
 func TestAppMessageIDsAndRemoval(t *testing.T) {
 	s, id := open(t)
 	s.SaveMessages(id, []gotify.Message{msg(1, 1, "a"), msg(2, 2, "b"), msg(3, 1, "c"), msg(4, 1, "d")})

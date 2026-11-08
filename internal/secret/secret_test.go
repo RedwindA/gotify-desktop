@@ -47,10 +47,40 @@ func TestFileKeepsTokensAcrossInstances(t *testing.T) {
 	}
 }
 
-func TestFileReportsACorruptFile(t *testing.T) {
+func TestFileMovesACorruptFileAside(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tokens.json")
+	os.WriteFile(path+".corrupt", []byte("older"), 0o600)
 	os.WriteFile(path, []byte("{"), 0o600)
-	if _, err := NewFile(path).Get(1); err == nil || errors.Is(err, ErrNotFound) {
+	f := NewFile(path)
+	if _, err := f.Get(1); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
+	}
+	if b, err := os.ReadFile(path + ".corrupt"); err != nil || string(b) != "{" {
+		t.Fatalf("moved aside: %q, %v", b, err)
+	}
+	if err := f.Set(1, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := NewFile(path).Get(1); v != "a" || err != nil {
+		t.Fatalf("%q, %v", v, err)
+	}
+	if err := f.Delete(1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFileReturnsReadErrors(t *testing.T) {
+	// A directory in its place fails to read, as a locked file would.
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	os.Mkdir(path, 0o700)
+	f := NewFile(path)
+	if _, err := f.Get(1); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get: %v", err)
+	}
+	if err := f.Set(1, "a"); err == nil {
+		t.Fatal("Set ignored the read error")
+	}
+	if _, err := os.Stat(path + ".corrupt"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a file that could not be read was moved aside: %v", err)
 	}
 }

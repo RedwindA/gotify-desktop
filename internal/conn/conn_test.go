@@ -241,6 +241,29 @@ func TestFirstConnectImportsSilently(t *testing.T) {
 	}
 }
 
+// A connection syncs between the dial and going live, and is connected only
+// once the catch-up is stored.
+func TestStatesSyncBeforeConnected(t *testing.T) {
+	f := newFake(t)
+	f.post(1, 2, false)
+	s, rec, _ := setup(t, f, Config{})
+	s.Start()
+	_, n := rec.wait(t, 0, isState(Connected))
+	var states []string
+	caughtUp := false
+	for _, e := range rec.snapshot()[:n] {
+		switch {
+		case e.Kind == EventState:
+			states = append(states, e.State.String())
+		case isMsgs(e):
+			caughtUp = len(states) > 0 && states[len(states)-1] == "syncing"
+		}
+	}
+	if !reflect.DeepEqual(states, []string{"connecting", "syncing", "connected"}) || !caughtUp {
+		t.Fatalf("states %v, catch-up while syncing %v", states, caughtUp)
+	}
+}
+
 func TestFirstConnectEmptyHistoryThenLiveNotSilent(t *testing.T) {
 	f := newFake(t)
 	s, rec, _ := setup(t, f, Config{})

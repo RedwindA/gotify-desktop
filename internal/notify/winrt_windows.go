@@ -109,6 +109,12 @@ func showTaggedToast(appID string, n Notification) error {
 	if err := rtCall(&v2.IUnknown, 8, uintptr(group)); err != nil {
 		return err
 	}
+	// put_SuppressPopup: the toast replaces the one of its tag in the action center without popping up.
+	if n.Quiet {
+		if err := rtCall(&v2.IUnknown, 10, 1); err != nil {
+			return err
+		}
+	}
 	manager, err := ole.RoGetActivationFactory("Windows.UI.Notifications.ToastNotificationManager", ole.NewGUID("50ac103f-d235-4598-bbef-98fe4d1a3ad4"))
 	if err != nil {
 		return err

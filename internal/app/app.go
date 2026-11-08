@@ -55,13 +55,56 @@ type AppInfo struct {
 	MinPriority     *int
 }
 
+// State is where a server stands, from reading its token to a live connection.
+type State int
+
+const (
+	// Starting reads the server's token.
+	Starting State = iota
+	// Connecting dials the stream.
+	Connecting
+	// Syncing has the stream open while the apps and the catch-up load.
+	Syncing
+	// Connected is live.
+	Connected
+	// Backoff waits until RetryAt to connect again.
+	Backoff
+	// AuthFailed needs a sign-in: the server refused the token, or there is none (NeedLogin).
+	AuthFailed
+	// Unavailable is a failure on this computer: the token can't be read or
+	// the client can't be built. Err says which.
+	Unavailable
+)
+
+func (s State) String() string {
+	return [...]string{"starting", "connecting", "syncing", "connected", "backoff", "auth-failed", "unavailable"}[s]
+}
+
+// stateOf is the server state a connection state shows; ok is false for the
+// states of a supervisor that is not running, which say nothing about the server.
+func stateOf(s conn.State) (st State, ok bool) {
+	switch s {
+	case conn.Connecting:
+		return Connecting, true
+	case conn.Syncing:
+		return Syncing, true
+	case conn.Connected:
+		return Connected, true
+	case conn.Backoff:
+		return Backoff, true
+	case conn.AuthFailed:
+		return AuthFailed, true
+	}
+	return 0, false
+}
+
 type ServerInfo struct {
 	ID        int64
 	Name      string
 	URL       string
 	Insecure  bool
 	HasCA     bool
-	State     conn.State
+	State     State
 	Err       string
 	RetryAt   time.Time
 	NeedLogin bool
@@ -121,10 +164,19 @@ type runtime struct {
 	op      sync.Mutex
 	sv      store.Server
 	sup     *conn.Supervisor
-	state   conn.State
+	state   State
 	err     error
 	retryAt time.Time
 	noToken bool
+	// wake cuts short the wait before the token is read again.
+	wake chan struct{}
+}
+
+func (rt *runtime) wakeUp() {
+	select {
+	case rt.wake <- struct{}{}:
+	default:
+	}
 }
 
 type App struct {
@@ -132,10 +184,12 @@ type App struct {
 	st   *store.Store
 	disp *notify.Dispatcher
 
-	rebuildMu     sync.Mutex
-	mu            sync.Mutex
-	servers       map[int64]*runtime
-	closed        bool
+	rebuildMu sync.Mutex
+	mu        sync.Mutex
+	servers   map[int64]*runtime
+	closed    bool
+	// connects counts the goroutines reading tokens (connect); Close waits for them.
+	connects      sync.WaitGroup
 	snap          atomic.Pointer[Snapshot]
 	gen           uint64
 	msgGen        uint64
@@ -197,6 +251,7 @@ func (a *App) Close() {
 		s.Stop()
 	}
 	close(a.refreshStop)
+	a.connects.Wait()
 	<-a.refreshDone
 	<-a.pruneDone
 	a.disp.Close()
@@ -210,36 +265,77 @@ func (a *App) clientFor(sv store.Server, token string) (*gotify.Client, error) {
 // startServer adds a server's runtime and connects it in the background, after
 // reading its token.
 func (a *App) startServer(sv store.Server) {
-	rt := &runtime{sv: sv, state: conn.Connecting}
+	rt := &runtime{sv: sv, state: Starting, wake: make(chan struct{}, 1)}
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return
+	}
 	a.servers[sv.ID] = rt
-	a.mu.Unlock()
+	a.connects.Add(1)
 	go a.connect(sv.ID, rt)
 }
 
-// connect reads a server's token and starts its supervisor, unless the server
-// was removed or Relogin started one meanwhile.
+// connect reads a server's token and starts its supervisor. A token that can't
+// be read is read again after a backoff, or at once after KickAll, until the
+// server is removed, the app closes, or Relogin or UpdateServer started the
+// supervisor meanwhile.
 func (a *App) connect(id int64, rt *runtime) {
+	defer a.connects.Done()
+	cfg := a.opts.ConnConfig.WithDefaults()
+	backoff := cfg.MinBackoff
+	for a.tryConnect(id, rt) {
+		t := time.NewTimer(backoff)
+		select {
+		case <-a.refreshStop:
+			t.Stop()
+			return
+		case <-rt.wake:
+			t.Stop()
+			backoff = cfg.MinBackoff
+			continue
+		case <-t.C:
+		}
+		backoff = min(backoff*2, cfg.MaxBackoff)
+	}
+}
+
+// settled is whether a server's token no longer needs reading: the app closed,
+// the server was removed or its supervisor runs. a.mu is held.
+func (a *App) settled(id int64, rt *runtime) bool {
+	return a.closed || a.servers[id] != rt || rt.sup != nil
+}
+
+// tryConnect reads a server's token once and starts its supervisor. It
+// reports whether the token could not be read and should be read again.
+func (a *App) tryConnect(id int64, rt *runtime) (retry bool) {
+	a.mu.Lock()
+	done := a.settled(id, rt)
+	a.mu.Unlock()
+	if done {
+		return false
+	}
 	token, err := a.opts.Tokens.Get(id)
 	rt.op.Lock()
 	defer rt.op.Unlock()
 	a.mu.Lock()
-	if a.closed || a.servers[id] != rt || rt.sup != nil {
+	if a.settled(id, rt) {
 		a.mu.Unlock()
-		return
+		return false
 	}
 	var sup *conn.Supervisor
 	switch {
 	case errors.Is(err, secret.ErrNotFound), err == nil && token == "":
-		rt.noToken, rt.state, rt.err = true, conn.AuthFailed, gotify.ErrUnauthorized
+		rt.noToken, rt.state, rt.err = true, AuthFailed, gotify.ErrUnauthorized
 	case err != nil:
-		rt.state, rt.err = conn.Disconnected, errors.New(i18n.T("Can't read the token: %v", err))
+		rt.state, rt.err = Unavailable, errors.New(i18n.T("Can't read the token: %v", err))
+		retry = true
 	default:
 		if client, cerr := a.clientFor(rt.sv, token); cerr != nil {
-			rt.state, rt.err = conn.Disconnected, cerr
+			rt.state, rt.err = Unavailable, cerr
 		} else {
 			sup = conn.New(rt.sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
-			rt.sup = sup
+			rt.sup, rt.state, rt.err = sup, Connecting, nil
 		}
 	}
 	a.mu.Unlock()
@@ -248,6 +344,7 @@ func (a *App) connect(id int64, rt *runtime) {
 	}
 	a.rebuild(false)
 	a.changed()
+	return retry
 }
 
 // Connection callbacks only update in-memory state and request a coalesced
@@ -256,7 +353,9 @@ func (a *App) sink(ev conn.Event) {
 	if ev.Kind == conn.EventState {
 		a.mu.Lock()
 		if rt := a.servers[ev.ServerID]; rt != nil {
-			rt.state, rt.err, rt.retryAt = ev.State, ev.Err, ev.RetryAt
+			if st, ok := stateOf(ev.State); ok {
+				rt.state, rt.err, rt.retryAt = st, ev.Err, ev.RetryAt
+			}
 		}
 		a.mu.Unlock()
 	}
@@ -546,11 +645,13 @@ func (a *App) swapClient(v rtView, token string) error {
 	started := false
 	if sup == nil {
 		sup = conn.New(v.sv.ID, client, a.st, a.sink, a.opts.ConnConfig)
-		v.rt.sup, started = sup, true
+		v.rt.sup, v.rt.state, v.rt.err, started = sup, Connecting, nil, true
 	}
 	a.mu.Unlock()
 	if started {
 		sup.Start()
+		// A retry of the token (connect) now ends.
+		v.rt.wakeUp()
 		return nil
 	}
 	sup.SetClient(client)
@@ -598,10 +699,8 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	if _, err := a.clientFor(v.sv, token); err != nil {
 		return err
 	}
-	oldToken, tokenErr := a.opts.Tokens.Get(serverID)
-	if tokenErr != nil && !errors.Is(tokenErr, secret.ErrNotFound) {
-		return tokenErr
-	}
+	// The old token may be missing or unreadable: the new one replaces it all the same.
+	oldToken, oldErr := a.opts.Tokens.Get(serverID)
 	if err := a.opts.Tokens.Set(serverID, token); err != nil {
 		return errors.New(i18n.T("Couldn't store the token: %v", err))
 	}
@@ -609,7 +708,7 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	sv.ClientID, sv.UserID, sv.UserName = clientID, me.ID, me.Name
 	if err := a.st.UpdateServer(sv); err != nil {
 		var rollback error
-		if errors.Is(tokenErr, secret.ErrNotFound) {
+		if oldErr != nil {
 			rollback = a.opts.Tokens.Delete(serverID)
 		} else {
 			rollback = a.opts.Tokens.Set(serverID, oldToken)
@@ -627,8 +726,25 @@ func (a *App) Relogin(ctx context.Context, serverID int64, user, pass string) er
 	return nil
 }
 
-// UpdateServer changes a server's settings; a nil ca keeps its CA certificate, an empty one removes it.
-func (a *App) UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca []byte) error {
+// CAAction is what UpdateServer does with a server's CA certificate.
+type CAAction int
+
+const (
+	CAKeep CAAction = iota
+	// CASet trusts CAChange.PEM instead.
+	CASet
+	CARemove
+)
+
+// CAChange is a change of a server's CA certificate.
+type CAChange struct {
+	Action CAAction
+	// PEM is the certificate CASet trusts.
+	PEM []byte
+}
+
+// UpdateServer changes a server's name, TLS options and CA certificate.
+func (a *App) UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca CAChange) error {
 	v, err := a.runtimeOf(serverID)
 	if err != nil {
 		return err
@@ -640,8 +756,11 @@ func (a *App) UpdateServer(ctx context.Context, serverID int64, name string, ins
 	}
 	sv := v.sv
 	sv.Name, sv.InsecureSkipVerify = name, insecure
-	if ca != nil {
-		sv.CACertPEM = string(ca)
+	switch ca.Action {
+	case CASet:
+		sv.CACertPEM = string(ca.PEM)
+	case CARemove:
+		sv.CACertPEM = ""
 	}
 	if sv.Name == "" {
 		sv.Name = hostName(sv.URL)
@@ -675,12 +794,18 @@ func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
 		return err
 	}
 	token, tokenErr := a.opts.Tokens.Get(serverID)
-	if tokenErr != nil && !errors.Is(tokenErr, secret.ErrNotFound) {
-		return tokenErr
+	// A token store that can't be read must not keep the server: it goes from
+	// here, and its client stays on the server, unknown.
+	unreadable := tokenErr != nil && !errors.Is(tokenErr, secret.ErrNotFound)
+	if unreadable {
+		log.Printf("remove server %d: can't read the token, so its client stays on the server: %v", serverID, tokenErr)
 	}
 	// Keep the runtime and remote client intact until both local stores agree.
 	if err := a.opts.Tokens.Delete(serverID); err != nil {
-		return err
+		if !unreadable {
+			return err
+		}
+		log.Printf("remove server %d: delete the token: %v", serverID, err)
 	}
 	if err := a.st.DeleteServer(serverID); err != nil {
 		if tokenErr == nil {
@@ -694,6 +819,8 @@ func (a *App) RemoveServer(ctx context.Context, serverID int64) error {
 	a.mu.Lock()
 	delete(a.servers, serverID)
 	a.mu.Unlock()
+	// A retry of the token (connect) now ends.
+	v.rt.wakeUp()
 	a.metadataDirty.Store(true)
 	a.rebuild(true)
 	a.changed()
@@ -923,6 +1050,9 @@ func (a *App) KickAll() {
 	for _, rt := range a.servers {
 		if rt.sup != nil {
 			sups = append(sups, rt.sup)
+		} else {
+			// One whose token could not be read reads it again now.
+			rt.wakeUp()
 		}
 	}
 	a.mu.Unlock()

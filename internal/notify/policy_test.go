@@ -2,6 +2,7 @@ package notify
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -210,7 +211,7 @@ func TestBurstSummary(t *testing.T) {
 		}
 	}
 	got := push(t0.Add(4*time.Second), 4, 1, 9)
-	if len(got) != 1 || got[0].ID != "s1-a1-burst" || got[0].Title != "4 new messages from Backup" || got[0].Level != LevelHigh || got[0].Body != "t2\nt3\nt4" {
+	if len(got) != 1 || got[0].ID != "s1-a1-burst" || got[0].Title != "4 new messages from Backup" || got[0].Level != LevelHigh || got[0].Quiet || got[0].Body != "t2\nt3\nt4" {
 		t.Fatalf("%+v", got)
 	}
 	if got := push(t0.Add(5*time.Second), 5, 2, 5); len(got) != 1 || got[0].MessageID != 5 {
@@ -219,11 +220,186 @@ func TestBurstSummary(t *testing.T) {
 	if got := push(t0.Add(6*time.Second), 6, 1, 5); len(got) != 0 {
 		t.Fatalf("burst key must stay quiet after its summary: %+v", got)
 	}
-	if got := push(t0.Add(14*time.Second), 7, 1, 5); len(got) != 0 {
-		t.Fatalf("messages keep the quiet period going: %+v", got)
+	got = push(t0.Add(14*time.Second), 7, 1, 5)
+	if len(got) != 1 || got[0].ID != "s1-a1-burst" || got[0].Title != "6 new messages from Backup" || got[0].Level != LevelSilent || !got[0].Quiet ||
+		got[0].Body != "t4\nt6\nt7" || fmt.Sprint(got[0].MessageIDs) != "[1 2 3 4 6 7]" {
+		t.Fatalf("messages keep the quiet period going and update the summary quietly: %+v", got)
 	}
 	if got := push(t0.Add(30*time.Second), 8, 1, 5); len(got) != 1 || got[0].MessageID != 8 {
 		t.Fatalf("a quiet window should start fresh: %+v", got)
+	}
+}
+
+func TestBurstSteadyStream(t *testing.T) {
+	pl := NewPlanner()
+	s := DefaultSettings()
+	var summaries []Planned
+	id := uint(0)
+	for sec := 1; sec <= 60; sec++ {
+		id++
+		got := pl.Plan(live(msg(id, 1, 9, fmt.Sprintf("t%d", id), "")), testApps, nil, s, t0.Add(time.Duration(sec)*time.Second))
+		switch {
+		case sec <= 3:
+			if len(got) != 1 || got[0].MessageID != id {
+				t.Fatalf("second %d: %+v", sec, got)
+			}
+		case len(got) > 0:
+			if len(got) != 1 || got[0].ID != "s1-a1-burst" {
+				t.Fatalf("second %d: %+v", sec, got)
+			}
+			summaries = append(summaries, got[0])
+		}
+	}
+	// The summary at 4 s, then a quiet update every BurstWindow.
+	want := []int{4, 14, 24, 34, 44, 54}
+	if len(summaries) != len(want) {
+		t.Fatalf("%d summaries: %+v", len(summaries), summaries)
+	}
+	for i, p := range summaries {
+		n := want[i]
+		level := LevelSilent
+		if i == 0 {
+			level = LevelHigh
+		}
+		if p.Title != fmt.Sprintf("%d new messages from Backup", n) || len(p.MessageIDs) != n || p.MessageIDs[0] != 1 || p.MessageIDs[n-1] != uint(n) ||
+			p.Body != fmt.Sprintf("t%d\nt%d\nt%d", n-2, n-1, n) || p.Level != level {
+			t.Errorf("summary %d: %+v", i, p)
+		}
+	}
+	// Messages 55 to 60 came after the last update: the next event sends theirs
+	// before the quiet gap starts afresh.
+	id++
+	got := pl.Plan(live(msg(id, 1, 9, "after", "")), testApps, nil, s, t0.Add(70*time.Second))
+	if len(got) != 2 || got[0].Title != "60 new messages from Backup" || got[0].Level != LevelSilent || !got[0].Quiet || got[1].MessageID != id {
+		t.Fatalf("a quiet gap ends the burst: %+v", got)
+	}
+}
+
+func TestBurstEndsWithinOneWindow(t *testing.T) {
+	pl := NewPlanner()
+	s := DefaultSettings()
+	var msgs []gotify.Message
+	for i := uint(1); i <= 4; i++ {
+		msgs = append(msgs, msg(i, 1, 5, fmt.Sprintf("t%d", i), ""))
+	}
+	pl.Plan(live(msgs...), testApps, nil, s, t0)
+	if _, ok := pl.NextFlush(s); ok {
+		t.Fatal("nothing to flush after the summary")
+	}
+	for i := uint(5); i <= 13; i++ {
+		if got := pl.Plan(live(msg(i, 1, 5, fmt.Sprintf("t%d", i), "")), testApps, nil, s, t0.Add(time.Duration(i-4)*time.Second)); len(got) != 0 {
+			t.Fatalf("msg %d: %+v", i, got)
+		}
+	}
+	if at, ok := pl.NextFlush(s); !ok || !at.Equal(t0.Add(s.BurstWindow)) {
+		t.Fatalf("next flush %v %v", at, ok)
+	}
+	if got := pl.Flush(s, t0.Add(9*time.Second)); len(got) != 0 {
+		t.Fatalf("flushed early: %+v", got)
+	}
+	got := pl.Flush(s, t0.Add(s.BurstWindow))
+	if len(got) != 1 || got[0].ID != "s1-a1-burst" || got[0].Title != "13 new messages from Backup" || got[0].Level != LevelSilent || !got[0].Quiet ||
+		got[0].Body != "t11\nt12\nt13" || len(got[0].MessageIDs) != 13 {
+		t.Fatalf("the burst's last messages are summarized: %+v", got)
+	}
+	if got := pl.Flush(s, t0.Add(15*time.Second)); len(got) != 0 {
+		t.Fatalf("flushed twice: %+v", got)
+	}
+	if _, ok := pl.NextFlush(s); ok {
+		t.Fatal("nothing left to flush")
+	}
+	if pl.Flush(s, t0.Add(19*time.Second)); len(pl.burst) != 0 {
+		t.Fatalf("the ended burst's state remains: %v", pl.burst)
+	}
+}
+
+func TestBurstUpdateSilencedByPause(t *testing.T) {
+	pl := NewPlanner()
+	s := DefaultSettings()
+	var msgs []gotify.Message
+	for i := uint(1); i <= 5; i++ {
+		msgs = append(msgs, msg(i, 1, 5, fmt.Sprintf("t%d", i), ""))
+	}
+	pl.Plan(live(msgs[:4]...), testApps, nil, s, t0)
+	pl.Plan(live(msgs[4]), testApps, nil, s, t0.Add(time.Second))
+	s.PausedUntil = t0.Add(time.Hour)
+	if got := pl.Flush(s, t0.Add(s.BurstWindow)); len(got) != 0 {
+		t.Fatalf("updated while paused: %+v", got)
+	}
+	if _, ok := pl.NextFlush(s); ok {
+		t.Fatal("a silenced update stays due")
+	}
+}
+
+func TestBurstUpdateCountsUnread(t *testing.T) {
+	pl := NewPlanner()
+	s := DefaultSettings()
+	read := uint(0)
+	pl.unread = func(_ int64, ids []uint) []uint {
+		return slices.DeleteFunc(slices.Clone(ids), func(id uint) bool { return id <= read })
+	}
+	var msgs []gotify.Message
+	for i := uint(1); i <= 4; i++ {
+		msgs = append(msgs, msg(i, 1, 5, fmt.Sprintf("t%d", i), ""))
+	}
+	pl.Plan(live(msgs...), testApps, nil, s, t0)
+	read = 5
+	for i := uint(5); i <= 8; i++ {
+		pl.Plan(live(msg(i, 1, 5, fmt.Sprintf("t%d", i), "")), testApps, nil, s, t0.Add(time.Duration(i-4)*time.Second))
+	}
+	got := pl.Flush(s, t0.Add(s.BurstWindow))
+	if len(got) != 1 || got[0].Title != "3 new messages from Backup" || fmt.Sprint(got[0].MessageIDs) != "[6 7 8]" {
+		t.Fatalf("read messages counted: %+v", got)
+	}
+	pl.Plan(live(msg(9, 1, 5, "t9", "")), testApps, nil, s, t0.Add(12*time.Second))
+	read = 9
+	if got := pl.Flush(s, t0.Add(2*s.BurstWindow)); len(got) != 0 {
+		t.Fatalf("an update with every message read: %+v", got)
+	}
+	if got := pl.Plan(live(msg(10, 1, 5, "t10", ""), msg(11, 1, 5, "t11", "")), testApps, nil, s, t0.Add(21*time.Second)); len(got) != 0 {
+		t.Fatalf("the burst goes on: %+v", got)
+	}
+	got = pl.Flush(s, t0.Add(3*s.BurstWindow))
+	if len(got) != 1 || got[0].Title != "2 new messages from Backup" || fmt.Sprint(got[0].MessageIDs) != "[10 11]" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestBurstUpdateListsUnreadOnly(t *testing.T) {
+	pl := NewPlanner()
+	s := DefaultSettings()
+	read := uint(0)
+	pl.unread = func(_ int64, ids []uint) []uint {
+		return slices.DeleteFunc(slices.Clone(ids), func(id uint) bool { return id <= read })
+	}
+	var msgs []gotify.Message
+	for i := uint(1); i <= 4; i++ {
+		msgs = append(msgs, msg(i, 1, 5, fmt.Sprintf("t%d", i), ""))
+	}
+	pl.Plan(live(msgs...), testApps, nil, s, t0)
+	read = 4
+	pl.Plan(live(msg(5, 1, 5, "t5", "")), testApps, nil, s, t0.Add(time.Second))
+	got := pl.Flush(s, t0.Add(s.BurstWindow))
+	if len(got) != 1 || got[0].Title != "1 new message from Backup" || got[0].Body != "t5" || fmt.Sprint(got[0].MessageIDs) != "[5]" {
+		t.Fatalf("read messages listed: %+v", got)
+	}
+}
+
+func TestBurstStatePruned(t *testing.T) {
+	pl := NewPlanner()
+	s := DefaultSettings()
+	pl.Plan(live(msg(1, 1, 5, "a", ""), msg(2, 2, 5, "b", "")), testApps, nil, s, t0)
+	pl.Plan(conn.Event{ServerID: 2, Kind: conn.EventMessages, Messages: []gotify.Message{msg(3, 1, 5, "c", "")}}, testApps, nil, s, t0.Add(5*time.Second))
+	if len(pl.burst) != 3 {
+		t.Fatalf("%d keys", len(pl.burst))
+	}
+	pl.Plan(live(msg(4, 1, 5, "d", "")), testApps, nil, s, t0.Add(s.BurstWindow))
+	if _, ok := pl.burst[burstKey{1, 2}]; len(pl.burst) != 2 || ok {
+		t.Fatalf("keys quiet for BurstWindow remain: %v", pl.burst)
+	}
+	pl.Plan(live(msg(5, 1, 5, "e", "")), testApps, nil, s, t0.Add(30*time.Second))
+	if _, ok := pl.burst[burstKey{1, 1}]; len(pl.burst) != 1 || !ok {
+		t.Fatalf("%v", pl.burst)
 	}
 }
 

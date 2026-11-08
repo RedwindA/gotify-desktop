@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 
 	"gotify-desktop/internal/app"
-	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/i18n"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/store"
@@ -204,7 +203,7 @@ func (f *FakeBackend) AddServer(ctx context.Context, in app.ServerInput) (int64,
 	}
 	f.Added = append(f.Added, in)
 	id := int64(len(f.Servers) + 1)
-	f.Servers = append(f.Servers, app.ServerInfo{ID: id, Name: in.Name, URL: in.URL, State: conn.Connected})
+	f.Servers = append(f.Servers, app.ServerInfo{ID: id, Name: in.Name, URL: in.URL, State: app.Connected})
 	f.refresh()
 	return id, nil
 }
@@ -217,14 +216,14 @@ func (f *FakeBackend) Relogin(ctx context.Context, serverID int64, user, pass st
 	}
 	for i := range f.Servers {
 		if f.Servers[i].ID == serverID {
-			f.Servers[i].State, f.Servers[i].Err, f.Servers[i].NeedLogin = conn.Connected, "", false
+			f.Servers[i].State, f.Servers[i].Err, f.Servers[i].NeedLogin = app.Connected, "", false
 		}
 	}
 	f.refresh()
 	return nil
 }
 
-func (f *FakeBackend) UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca []byte) error {
+func (f *FakeBackend) UpdateServer(ctx context.Context, serverID int64, name string, insecure bool, ca app.CAChange) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.Servers {

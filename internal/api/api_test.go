@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -11,7 +14,6 @@ import (
 	"time"
 
 	"gotify-desktop/internal/app"
-	"gotify-desktop/internal/conn"
 	"gotify-desktop/internal/gotify"
 	"gotify-desktop/internal/notify"
 	"gotify-desktop/internal/store"
@@ -133,7 +135,7 @@ func TestMessagesScopeSearchAndFields(t *testing.T) {
 
 func TestMessagesPagesAndGrowToInclude(t *testing.T) {
 	f := NewFakeBackend()
-	f.Servers = []app.ServerInfo{{ID: 1, Name: "S", State: conn.Connected}}
+	f.Servers = []app.ServerInfo{{ID: 1, Name: "S", State: app.Connected}}
 	for i := 250; i >= 1; i-- {
 		f.Msgs = append(f.Msgs, msg(1, uint(i)))
 	}
@@ -215,28 +217,45 @@ func TestAddServerValidatesAndNormalizes(t *testing.T) {
 	if _, err := d.AddServer(ctx, ServerForm{URL: "gotify.example.com"}); err == nil {
 		t.Error("no credentials were accepted")
 	}
-	if _, err := d.AddServer(ctx, ServerForm{URL: "gotify.example.com", User: "a", Pass: "b", CA: "junk"}); err == nil {
+	if _, err := d.AddServer(ctx, ServerForm{URL: "gotify.example.com", User: "a", Pass: "b", CA: "junk", CAAction: CASet}); err == nil {
 		t.Error("a bad CA was accepted")
 	}
-	id, err := d.AddServer(ctx, ServerForm{Name: " Home ", URL: "gotify.example.com/sub/", User: "a", Pass: "b"})
+	if _, err := d.AddServer(ctx, ServerForm{URL: "gotify.example.com", User: "a", Pass: "b"}); err == nil {
+		t.Error("a form without a CA action was accepted")
+	}
+	id, err := d.AddServer(ctx, ServerForm{Name: " Home ", URL: "gotify.example.com/sub/", User: "a", Pass: "b", CA: "ignored", CAAction: CARemove})
 	if err != nil || id != 1 {
 		t.Fatalf("add: %d, %v", id, err)
 	}
 	if in := f.Added[0]; in.URL != "https://gotify.example.com/sub" || in.Name != "Home" || in.CACertPEM != nil {
 		t.Errorf("input: %+v", in)
 	}
+	ca := testCA(t)
+	if _, err := d.AddServer(ctx, ServerForm{URL: "gotify.example.com", User: "a", Pass: "b", CA: ca, CAAction: CASet}); err != nil {
+		t.Fatal(err)
+	}
+	if in := f.Added[1]; string(in.CACertPEM) != ca {
+		t.Errorf("CA not passed on: %+v", in)
+	}
 	f.AddErr = gotify.ErrUnauthorized
-	if _, err := d.AddServer(ctx, ServerForm{URL: "http://x", User: "a", Pass: "b"}); err == nil || err.Error() != "Wrong username or password" {
+	if _, err := d.AddServer(ctx, ServerForm{URL: "http://x", User: "a", Pass: "b", CAAction: CAKeep}); err == nil || err.Error() != "Wrong username or password" {
 		t.Errorf("errors are explained: %v", err)
 	}
 }
 
-type caRecorder struct {
-	*FakeBackend
-	ca [][]byte
+// testCA is a PEM certificate.
+func testCA(t *testing.T) string {
+	s := httptest.NewTLSServer(http.NotFoundHandler())
+	s.Close()
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.Certificate().Raw}))
 }
 
-func (r *caRecorder) UpdateServer(ctx context.Context, id int64, name string, insecure bool, ca []byte) error {
+type caRecorder struct {
+	*FakeBackend
+	ca []app.CAChange
+}
+
+func (r *caRecorder) UpdateServer(ctx context.Context, id int64, name string, insecure bool, ca app.CAChange) error {
 	r.ca = append(r.ca, ca)
 	return r.FakeBackend.UpdateServer(ctx, id, name, insecure, ca)
 }
@@ -248,17 +267,45 @@ func TestUpdateServerKeepsRemovesOrSetsCA(t *testing.T) {
 	c.Start(r, "")
 	d := c.Service()
 	ctx := context.Background()
-	if err := d.UpdateServer(ctx, 1, ServerForm{Name: "A", KeepCA: true}); err != nil {
-		t.Fatal(err)
+	ca := testCA(t)
+	for _, f := range []ServerForm{
+		{Name: "A", CA: "ignored", CAAction: CAKeep},
+		{Name: "A", CA: "ignored", CAAction: CARemove},
+		{Name: "A", CA: ca, CAAction: CASet},
+	} {
+		if err := d.UpdateServer(ctx, 1, f); err != nil {
+			t.Fatalf("%s: %v", f.CAAction, err)
+		}
 	}
-	if err := d.UpdateServer(ctx, 1, ServerForm{Name: "A"}); err != nil {
-		t.Fatal(err)
+	for _, f := range []ServerForm{
+		{Name: "A", CA: "junk", CAAction: CASet},
+		{Name: "A", CAAction: CASet},
+		{Name: "A"},
+		{Name: "A", CAAction: "replace"},
+	} {
+		if err := d.UpdateServer(ctx, 1, f); err == nil {
+			t.Errorf("%+v was accepted", f)
+		}
 	}
-	if err := d.UpdateServer(ctx, 1, ServerForm{Name: "A", CA: "junk"}); err == nil {
-		t.Fatal("a bad CA was accepted")
+	want := []app.CAChange{{Action: app.CAKeep}, {Action: app.CARemove}, {Action: app.CASet, PEM: []byte(ca)}}
+	if !reflect.DeepEqual(r.ca, want) {
+		t.Errorf("CA changes: %+v", r.ca)
 	}
-	if len(r.ca) != 2 || r.ca[0] != nil || r.ca[1] == nil || len(r.ca[1]) != 0 {
-		t.Errorf("CA arguments: %#v", r.ca)
+}
+
+func TestStateShowsWhereAServerStands(t *testing.T) {
+	f := NewFakeBackend()
+	_, d := start(t, f, Platform{})
+	want := map[app.State]ConnState{
+		app.Starting: StateConnecting, app.Connecting: StateConnecting, app.Syncing: StateSyncing, app.Connected: StateConnected,
+		app.Backoff: StateBackoff, app.AuthFailed: StateAuthFailed, app.Unavailable: StateDisconnected,
+	}
+	for st, ws := range want {
+		f.Servers = []app.ServerInfo{{ID: 1, Name: "S", State: st, Err: "why"}}
+		f.Refresh()
+		if got := d.State().Servers[0]; got.State != ws || got.Error != "why" {
+			t.Errorf("%s: %+v", st, got)
+		}
 	}
 }
 

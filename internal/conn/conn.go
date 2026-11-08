@@ -17,7 +17,11 @@ type State int
 
 const (
 	Disconnected State = iota
+	// Connecting dials the stream.
 	Connecting
+	// Syncing has the stream open while the apps and the catch-up load.
+	Syncing
+	// Connected is live: the catch-up is done.
 	Connected
 	Backoff
 	AuthFailed
@@ -25,7 +29,7 @@ const (
 )
 
 func (s State) String() string {
-	return [...]string{"disconnected", "connecting", "connected", "backoff", "auth-failed", "stopped"}[s]
+	return [...]string{"disconnected", "connecting", "syncing", "connected", "backoff", "auth-failed", "stopped"}[s]
 }
 
 type EventKind int
@@ -64,7 +68,8 @@ type Config struct {
 	ReconcileEvery time.Duration
 }
 
-func (c Config) withDefaults() Config {
+// WithDefaults fills in the durations and sizes left zero.
+func (c Config) WithDefaults() Config {
 	def := func(d *time.Duration, v time.Duration) {
 		if *d <= 0 {
 			*d = v
@@ -146,7 +151,7 @@ func New(serverID int64, client *gotify.Client, st Store, sink func(Event), cfg 
 		sink = func(Event) {}
 	}
 	return &Supervisor{
-		id: serverID, st: st, sink: sink, cfg: cfg.withDefaults(), client: client,
+		id: serverID, st: st, sink: sink, cfg: cfg.WithDefaults(), client: client,
 		ctx: ctx, cancel: cancel, kick: make(chan struct{}, 1), done: make(chan struct{}),
 		imageWake: make(chan struct{}, 1), known: map[uint]bool{}, missingAt: map[uint]time.Time{}, appsSlot: make(chan struct{}, 1),
 	}
@@ -317,7 +322,7 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 		return time.Time{}, err
 	}
 	connectedAt = time.Now()
-	s.setState(Connected, nil, time.Time{})
+	s.setState(Syncing, nil, time.Time{})
 
 	q := newQueue()
 	wg.Add(2)
@@ -370,6 +375,7 @@ func (s *Supervisor) session() (connectedAt time.Time, err error) {
 	if err = s.catchUp(ctx, client, q); err != nil {
 		return connectedAt, err
 	}
+	s.setState(Connected, nil, time.Time{})
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

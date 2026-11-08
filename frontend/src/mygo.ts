@@ -30,6 +30,12 @@ export interface Appearance {
   material: Material;
 }
 
+/**
+ * CAAction is what a ServerForm does with the server's CA certificate.
+ * When a server is added, "keep" and "remove" both mean none.
+ */
+export type CAAction = "keep" | "set" | "remove";
+
 /** CAFile is a CA certificate the user chose. */
 export interface CAFile {
   name: string;
@@ -53,7 +59,7 @@ export interface Confirmation {
 }
 
 /** ConnState is the state of a server's connection. */
-export type ConnState = "connected" | "connecting" | "backoff" | "authFailed" | "disconnected";
+export type ConnState = "connected" | "connecting" | "syncing" | "backoff" | "authFailed" | "disconnected";
 
 /**
  * ImageRequest asks CopyMessageImage for the image of a message, drawn as
@@ -172,10 +178,9 @@ export interface ServerForm {
   user: string;
   pass: string;
   insecure: boolean;
-  /** CA is a PEM CA certificate to trust; empty for none. */
+  /** CA is the PEM CA certificate to trust, read only when CAAction is "set". */
   ca: string;
-  /** KeepCA makes UpdateServer leave the server's CA certificate as it is. */
-  keepCA: boolean;
+  caAction: CAAction;
 }
 
 /** Settings are the notification settings the user edits. */
@@ -375,7 +380,7 @@ export const Desktop = {
   testNotification(): Promise<void> {
     return call("Desktop.TestNotification");
   },
-  /** UpdateServer changes a server's name and TLS options. */
+  /** UpdateServer changes a server's name, TLS options and CA certificate. */
   updateServer(serverID: number, f: ServerForm): Promise<void> {
     return call("Desktop.UpdateServer", serverID, f);
   },

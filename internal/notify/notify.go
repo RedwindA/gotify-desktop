@@ -25,6 +25,9 @@ type Notification struct {
 	ImagePath string
 	Group     string
 	Level     Level
+	// Quiet replaces the notification of the same ID in place without showing
+	// it again: no banner, no sound. Burst summaries are updated this way.
+	Quiet bool
 	// Actions are the notification's buttons.
 	Actions []Action
 }

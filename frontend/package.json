@@ -7,9 +7,11 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test:links": "bun test ./scripts/links.test.ts",
+    "test:selection-state": "bun test ./scripts/selection-state.test.ts",
     "test:messages": "bun scripts/messages-test.ts",
     "test:context-menu": "bun scripts/context-menu-test.ts",
     "test:selection": "bun scripts/selection-test.ts",
+    "test:commands": "bun scripts/commands-test.ts",
     "test:sidebar-order": "bun scripts/sidebar-order-test.ts",
     "test:idle-animation": "bun scripts/idle-animation-test.ts",
     "screenshots": "node scripts/screenshots.ts"

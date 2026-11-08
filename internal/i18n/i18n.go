@@ -105,6 +105,7 @@ var chinese = map[string]string{
 	// Notifications.
 	"%d missed messages":      "错过了 %d 条消息",
 	"%d new messages from %s": "%[2]s 发来 %[1]d 条新消息",
+	"1 new message from %s":   "%s 发来 1 条新消息",
 	"Notifications work.":     "通知工作正常。",
 	"Mark as read":            "标为已读",
 	"Mark all as read":        "全部标为已读",

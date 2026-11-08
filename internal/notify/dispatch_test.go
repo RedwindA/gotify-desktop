@@ -1,10 +1,14 @@
 package notify
 
 import (
+	"bytes"
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -224,5 +228,68 @@ func TestDispatcherDropsStaleMessagesBeforePlanning(t *testing.T) {
 	got := fn.wait(t, 1)
 	if len(got) != 1 || got[0].ID != "s1-m5" {
 		t.Fatalf("one fresh message should be shown on its own: %+v", got)
+	}
+}
+
+func TestDispatcherShowsUpdateWithItsServersIcon(t *testing.T) {
+	_, fn, st, sid, cache := setup(t, nil)
+	other, _ := st.AddServer(store.Server{Name: "t", URL: "http://y"})
+	st.ReplaceApps(other, []gotify.Application{{ID: 1, Name: "Other", Image: "image/b.png"}})
+	otherIcon := append(slices.Clone(png1x1), 'B')
+	st.SetAppImage(other, 1, otherIcon)
+	var five []gotify.Message
+	for i := uint(1); i <= 5; i++ {
+		five = append(five, gotify.Message{ID: i, AppID: 1, Date: time.Now()})
+	}
+	st.SaveMessages(other, five)
+	// Without its run loop, so that no flush timer takes the update first.
+	d := &Dispatcher{n: fn, st: st, settings: DefaultSettings, cacheDir: cache, http: http.DefaultClient, planner: NewPlanner(),
+		ctx: context.Background(), icons: map[string]string{}}
+	d.planner.unread = d.unread
+	s := DefaultSettings()
+	d.settings = func() Settings { s := s; s.BurstWindow = 100 * time.Millisecond; return s }
+	d.process(conn.Event{ServerID: other, Kind: conn.EventMessages, Messages: []gotify.Message{msg(1, 1, 5, "a", ""), msg(2, 1, 5, "b", ""), msg(3, 1, 5, "c", ""), msg(4, 1, 5, "d", "")}})
+	d.process(conn.Event{ServerID: other, Kind: conn.EventMessages, Messages: []gotify.Message{msg(5, 1, 5, "e", "")}})
+	time.Sleep(150 * time.Millisecond)
+	d.process(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(20, 1, 5, "x", "")}})
+	var update *Notification
+	for i := range fn.got {
+		if fn.got[i].ID == fmt.Sprintf("s%d-a1-burst", other) && fn.got[i].Quiet {
+			update = &fn.got[i]
+		}
+	}
+	if update == nil {
+		t.Fatalf("no quiet update: %+v", fn.got)
+	}
+	if b, err := os.ReadFile(update.IconPath); err != nil || !bytes.Equal(b, otherIcon) {
+		t.Fatalf("the update shows another server's icon: %v", err)
+	}
+}
+
+func TestDispatcherFlushesBurstUpdate(t *testing.T) {
+	d, fn, st, sid, _ := setup(t, nil)
+	d.settings = func() Settings { s := DefaultSettings(); s.BurstWindow = 300 * time.Millisecond; return s }
+	var four []gotify.Message
+	for i := uint(1); i <= 4; i++ {
+		four = append(four, msg(i, 1, 5, fmt.Sprintf("t%d", i), ""))
+	}
+	start := time.Now()
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: four})
+	if got := fn.wait(t, 4); got[3].ID != "s1-a1-burst" || got[3].Level != LevelNormal {
+		t.Fatalf("%+v", got)
+	}
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(5, 1, 5, "t5", "")}})
+	d.Handle(conn.Event{ServerID: sid, Kind: conn.EventMessages, Messages: []gotify.Message{msg(6, 1, 5, "t6", "")}})
+	st.MarkRead(sid, 1, 2, 3)
+	got := fn.wait(t, 1)[4]
+	if time.Since(start) < 300*time.Millisecond || got.ID != "s1-a1-burst" || got.Title != "3 new messages from Backup" ||
+		got.Level != LevelSilent || !got.Quiet || got.Body != "t4\nt5\nt6" || got.IconPath == "" {
+		t.Fatalf("the burst's last messages are not summarized quietly: %+v", got)
+	}
+	time.Sleep(400 * time.Millisecond)
+	fn.mu.Lock()
+	defer fn.mu.Unlock()
+	if len(fn.got) != 5 {
+		t.Fatalf("updated again with nothing new: %+v", fn.got[5:])
 	}
 }

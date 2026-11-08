@@ -136,8 +136,13 @@ func registerDelegateClass() {
 	}
 	_, err := objc.RegisterClass("GotifyDesktopNotificationDelegate", objc.GetClass("NSObject"), protocols, nil, []objc.MethodDef{
 		{Cmd: sel("userNotificationCenter:willPresentNotification:withCompletionHandler:"), Fn: func(self objc.ID, _ objc.SEL, center, n objc.ID, handler uintptr) {
+			req := requestOf(n)
 			opts := uintptr(presentBanner | presentList)
-			if !userInfoSilent(requestOf(n)) {
+			switch {
+			case userInfoFlag(req, "quiet"):
+				// An update in place goes to the notification center only.
+				opts = presentList
+			case !userInfoFlag(req, "silent"):
 				opts |= presentSound
 			}
 			callBlock(handler, opts)
@@ -166,8 +171,8 @@ func requestOf(n objc.ID) objc.ID { return send(n, "request") }
 
 func userInfoOf(req objc.ID) objc.ID { return send(send(req, "content"), "userInfo") }
 
-func userInfoSilent(req objc.ID) bool {
-	v := send(userInfoOf(req), "objectForKey:", nsString("silent"))
+func userInfoFlag(req objc.ID, key string) bool {
+	v := send(userInfoOf(req), "objectForKey:", nsString(key))
 	return v != 0 && sendBool(v, "boolValue")
 }
 
@@ -300,6 +305,7 @@ func (n *darwinNotifier) Show(nn Notification) error {
 		info := send(cls("NSMutableDictionary"), "dictionary")
 		send(info, "setObject:forKey:", nsString(nn.ID), nsString("id"))
 		send(info, "setObject:forKey:", send(cls("NSNumber"), "numberWithBool:", nn.Level == LevelSilent), nsString("silent"))
+		send(info, "setObject:forKey:", send(cls("NSNumber"), "numberWithBool:", nn.Quiet), nsString("quiet"))
 		send(content, "setUserInfo:", info)
 		src := nn.ImagePath
 		if src == "" {

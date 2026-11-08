@@ -3,6 +3,7 @@ package notify
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +71,11 @@ func (s Settings) dndActive(now time.Time) bool {
 	return m >= s.DNDStart || m < s.DNDEnd
 }
 
+// silenced reports whether a pause or do not disturb keeps a notification of level from showing.
+func (s Settings) silenced(level Level, now time.Time) bool {
+	return now.Before(s.PausedUntil) || s.dndActive(now) && !(level == LevelHigh && s.HighBypassesDND)
+}
+
 // LevelFor maps a Gotify priority to a notification level; priority 0 is never shown.
 func LevelFor(priority int) (Level, bool) {
 	switch {
@@ -112,17 +118,31 @@ type burstEntry struct {
 }
 
 type burstState struct {
-	entries    []burstEntry
-	lastAt     time.Time
+	// entries are the key's messages within BurstWindow; while suppressed, the last burstMaxLines.
+	entries []burstEntry
+	lastAt  time.Time
+	name    string
+	// While suppressed: every message since the burst began (once an update
+	// has gone out, only those still unread then), their highest level, when
+	// the burst summary last went out, and whether messages came since.
 	suppressed bool
+	ids        []uint
+	level      Level
+	shownAt    time.Time
+	dirty      bool
 }
 
 // Planner turns connection events into notifications and remembers recent
 // ones per (server, app) to collapse bursts: once a burst summary is out, the
 // key stays quiet until BurstWindow passes without a new message for it.
+// Messages that come meanwhile update the summary quietly, at most once per
+// BurstWindow: in Plan, or in Flush when no message comes to trigger it.
 type Planner struct {
 	mu    sync.Mutex
 	burst map[burstKey]*burstState
+	// unread, when set, keeps those of a server's message ids that are still
+	// stored and unread; an update counts only those.
+	unread func(serverID int64, ids []uint) []uint
 }
 
 func NewPlanner() *Planner { return &Planner{burst: map[burstKey]*burstState{}} }
@@ -135,7 +155,6 @@ func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]Ap
 	if now.Before(s.PausedUntil) {
 		return nil
 	}
-	dnd := s.dndActive(now)
 	var msgs []gotify.Message
 	for _, m := range ev.Messages {
 		pref := prefs[m.AppID]
@@ -143,7 +162,7 @@ func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]Ap
 		switch {
 		case !ok, pref.Muted, pref.MinPriority != nil && m.Priority < *pref.MinPriority:
 			continue
-		case dnd && !(level == LevelHigh && s.HighBypassesDND):
+		case s.silenced(level, now):
 			continue
 		}
 		msgs = append(msgs, m)
@@ -157,7 +176,7 @@ func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]Ap
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var out []Planned
+	out := p.endQuiet(s, now)
 	var bursting []burstKey
 	for _, m := range msgs {
 		level, _ := LevelFor(m.Priority)
@@ -167,40 +186,112 @@ func (p *Planner) Plan(ev conn.Event, apps map[uint]store.App, prefs map[uint]Ap
 			st = &burstState{}
 			p.burst[key] = st
 		}
-		if now.Sub(st.lastAt) >= s.BurstWindow {
-			st.entries, st.suppressed = nil, false
-		}
 		st.lastAt = now
+		st.name = appName(apps, m.AppID)
+		entry := burstEntry{m.ID, now, headline(m, apps), level}
+		if st.suppressed {
+			st.ids = append(st.ids, m.ID)
+			st.level = max(st.level, level)
+			st.entries = append(st.entries[max(0, len(st.entries)-burstMaxLines+1):], entry)
+			st.dirty = true
+			continue
+		}
 		kept := st.entries[:0:0]
 		for _, e := range st.entries {
 			if now.Sub(e.at) < s.BurstWindow {
 				kept = append(kept, e)
 			}
 		}
-		st.entries = append(kept, burstEntry{m.ID, now, headline(m, apps), level})
-		if st.suppressed {
-			continue
-		}
+		st.entries = append(kept, entry)
 		if len(st.entries) > s.BurstMax {
-			st.suppressed = true
+			st.suppressed, st.shownAt = true, now
+			for _, e := range st.entries {
+				st.ids = append(st.ids, e.id)
+				st.level = max(st.level, e.level)
+			}
+			st.entries = st.entries[max(0, len(st.entries)-burstMaxLines):]
 			bursting = append(bursting, key)
 			continue
 		}
 		out = append(out, individual(ev.ServerID, m, level, apps))
 	}
 	for _, key := range bursting {
-		out = append(out, burstSummary(key, p.burst[key].entries, apps))
+		st := p.burst[key]
+		out = append(out, burstSummary(key, st, st.level))
+	}
+	return append(out, p.updateDue(s, now)...)
+}
+
+// Flush returns the quiet updates that are due, among them the last one of a
+// burst that has ended, and drops the state of keys quiet for BurstWindow.
+func (p *Planner) Flush(s Settings, now time.Time) []Planned {
+	s = s.withDefaults()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append(p.endQuiet(s, now), p.updateDue(s, now)...)
+}
+
+// NextFlush is when Flush next has an update to return.
+func (p *Planner) NextFlush(s Settings) (time.Time, bool) {
+	s = s.withDefaults()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var next time.Time
+	for _, st := range p.burst {
+		if at := st.shownAt.Add(s.BurstWindow); st.dirty && (next.IsZero() || at.Before(next)) {
+			next = at
+		}
+	}
+	return next, !next.IsZero()
+}
+
+// endQuiet drops the state of keys quiet for BurstWindow, which would start
+// afresh, after the last update of a burst whose summary misses messages.
+func (p *Planner) endQuiet(s Settings, now time.Time) []Planned {
+	var out []Planned
+	for key, st := range p.burst {
+		if now.Sub(st.lastAt) < s.BurstWindow {
+			continue
+		}
+		if st.dirty {
+			out = append(out, p.update(key, st, s, now)...)
+		}
+		delete(p.burst, key)
 	}
 	return out
 }
 
-func containsKey(keys []burstKey, k burstKey) bool {
-	for _, x := range keys {
-		if x == k {
-			return true
+// updateDue updates the summaries that miss messages and went out at least
+// BurstWindow ago.
+func (p *Planner) updateDue(s Settings, now time.Time) []Planned {
+	var out []Planned
+	for key, st := range p.burst {
+		if st.dirty && now.Sub(st.shownAt) >= s.BurstWindow {
+			out = append(out, p.update(key, st, s, now)...)
 		}
 	}
-	return false
+	return out
+}
+
+// update replaces a burst's summary in place, at the quietest level, counting
+// the burst's messages still unread; with none, or while a pause or do not
+// disturb silences the burst, it shows nothing.
+func (p *Planner) update(key burstKey, st *burstState, s Settings, now time.Time) []Planned {
+	st.shownAt, st.dirty = now, false
+	if s.silenced(st.level, now) {
+		return nil
+	}
+	if p.unread != nil {
+		st.ids = p.unread(key.server, st.ids)
+		// The lines are of messages still unread too.
+		st.entries = slices.DeleteFunc(st.entries, func(e burstEntry) bool { return !slices.Contains(st.ids, e.id) })
+	}
+	if len(st.ids) == 0 {
+		return nil
+	}
+	pl := burstSummary(key, st, LevelSilent)
+	pl.Quiet = true
+	return []Planned{pl}
 }
 
 func appName(apps map[uint]store.App, id uint) string {
@@ -313,27 +404,27 @@ func appLine(apps map[uint]store.App, m gotify.Message) string {
 	return h
 }
 
-func burstSummary(key burstKey, entries []burstEntry, apps map[uint]store.App) Planned {
-	name := appName(apps, key.app)
+// burstTitle is the title of a burst summary of n messages; an update may count one.
+func burstTitle(n int, name string) string {
+	if n == 1 {
+		return i18n.T("1 new message from %s", name)
+	}
+	return i18n.T("%d new messages from %s", n, name)
+}
+
+func burstSummary(key burstKey, st *burstState, level Level) Planned {
+	name := st.name
 	if name == "" {
 		name = "Gotify"
 	}
-	level := LevelSilent
-	for _, e := range entries {
-		level = max(level, e.level)
-	}
 	var lines []string
-	var msgIDs []uint
-	for _, e := range entries {
-		msgIDs = append(msgIDs, e.id)
-	}
-	for _, e := range entries[max(0, len(entries)-burstMaxLines):] {
+	for _, e := range st.entries {
 		lines = append(lines, e.line)
 	}
 	return Planned{
 		Notification: Notification{
 			ID:      fmt.Sprintf("s%d-a%d-burst", key.server, key.app),
-			Title:   i18n.T("%d new messages from %s", len(entries), name),
+			Title:   burstTitle(len(st.ids), name),
 			Body:    strings.Join(lines, "\n"),
 			AppName: name,
 			Group:   fmt.Sprintf("s%d-a%d", key.server, key.app),
@@ -342,7 +433,7 @@ func burstSummary(key burstKey, entries []burstEntry, apps map[uint]store.App) P
 		},
 		ServerID:   key.server,
 		AppID:      key.app,
-		MessageIDs: msgIDs,
+		MessageIDs: st.ids,
 	}
 }
 
