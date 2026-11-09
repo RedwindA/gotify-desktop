@@ -84,13 +84,16 @@ export const MessageRow = memo(function MessageRow({
             <Text weight={unread ? "semibold" : "normal"} maxLines={1} hasTruncateTooltip={false} wordBreak="break-word" className="selectable grow">
               {title}
             </Text>
-            {msg.priority >= 8 && <Badge variant="error" label={t.priority(msg.priority)} className="no-shrink" />}
             <Timestamp value={msg.date} format="relative_short" isLive hasTooltip={false} className="no-shrink" />
           </HStack>
-          {meta && (
-            <Text type="supporting" maxLines={1} hasTruncateTooltip={false}>
-              {meta}
-            </Text>
+          {/* The priority sits here, so that it does not take the title's room. */}
+          {(meta || msg.priority >= 8) && (
+            <HStack gap={2} vAlign="center">
+              <Text type="supporting" maxLines={1} hasTruncateTooltip={false} className="grow">
+                {meta}
+              </Text>
+              {msg.priority >= 8 && <Badge variant="error" label={t.priority(msg.priority)} className="no-shrink" />}
+            </HStack>
           )}
           {preview && (
             <Text type="supporting" color="secondary" maxLines={1} hasTruncateTooltip={false}>

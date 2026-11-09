@@ -57,7 +57,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
       <Heading level={2} className="settings-group-title">
         {title}
       </Heading>
-      <Section padding={4} className="settings-group">
+      <Section padding={5} className="settings-group">
         <VStack gap={4}>{children}</VStack>
       </Section>
     </VStack>

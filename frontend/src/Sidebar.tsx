@@ -28,8 +28,13 @@ export interface ServerActions {
   moveApp(sv: Server, appId: number, beforeId: number): Promise<void>;
 }
 
+/** A row's unread count. The row's menu button takes its place under the pointer (app.css). */
 function count(n: number) {
-  return n > 0 ? <Badge label={n > 999 ? "999+" : n} /> : undefined;
+  return n > 0 ? (
+    <span className="sidenav-end">
+      <Badge label={n > 999 ? "999+" : n} />
+    </span>
+  ) : undefined;
 }
 
 export function statusText(t: Messages, sv: Server, now: number): string {
@@ -125,7 +130,15 @@ function ServerApps({
               icon={<AppAvatar serverId={sv.id} app={a} size="xsm" />}
               isSelected={isSel(sv.id, a.id)}
               onClick={() => go({ page: "messages", serverId: sv.id, appId: a.id })}
-              endContent={a.muted ? <Icon icon={BellOffIcon} size="sm" color="secondary" label={t.muted} /> : count(a.unread)}
+              endContent={
+                a.muted ? (
+                  <span className="sidenav-end">
+                    <Icon icon={BellOffIcon} size="sm" color="secondary" label={t.muted} />
+                  </span>
+                ) : (
+                  count(a.unread)
+                )
+              }
               actions={
                 <MoreMenu
                   size="sm"

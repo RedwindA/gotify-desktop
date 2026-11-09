@@ -280,6 +280,34 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   border-bottom: 1px solid var(--color-border);
 }
 
+/* A row's menu button shows under the pointer, on keyboard focus and while its
+   menu is open, in the place of the unread count, which otherwise sits at the
+   row's edge like the count of "All messages". Without a pointer that hovers
+   (touch) the button stays, beside the count. */
+@media (hover: hover) {
+  .astryx-side-nav-item:has(> span > [aria-haspopup="menu"]) {
+    position: relative;
+  }
+
+  .astryx-side-nav-item > span:has(> [aria-haspopup="menu"]) {
+    position: absolute;
+    inset-inline-end: 8px;
+    opacity: 0;
+  }
+
+  .astryx-side-nav-item:hover > span:has(> [aria-haspopup="menu"]),
+  .astryx-side-nav-item:has(:focus-visible) > span:has(> [aria-haspopup="menu"]),
+  .astryx-side-nav-item > span:has(> [aria-expanded="true"]) {
+    opacity: 1;
+  }
+
+  .astryx-side-nav-item:hover .sidenav-end,
+  .astryx-side-nav-item:has(:focus-visible) .sidenav-end,
+  .astryx-side-nav-item:has(> span > [aria-expanded="true"]) .sidenav-end {
+    visibility: hidden;
+  }
+}
+
 /* An app's row while the pointer drags it over the others. */
 .sidenav-app.dragging {
   position: relative;
