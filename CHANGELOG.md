@@ -2,6 +2,15 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.11
+
+- The sidebar is calmer: a row's menu button shows under the pointer or on keyboard focus, in the place of its unread count.
+- A high-priority message shows its whole title in the list: the priority label moved to the line below.
+- The group titles in Settings line up with their settings.
+- A server whose saved sign-in can't be read no longer stays stuck: the app tries again, or asks you to sign in again when the file is damaged.
+- The tray no longer shows a server as offline for a moment at launch.
+- During a long burst of messages, the summary notification is updated in place, quietly, instead of notifying again.
+
 ## 0.3.10
 
 - On macOS, when notifications are turned off for Gotify Desktop or still wait for your answer, the message list and Settings say so, with a button that opens the app's notification settings; Settings also tells when banners are off. macOS asks only once: quitting the app before answering leaves notifications off.
