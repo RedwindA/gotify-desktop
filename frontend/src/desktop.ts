@@ -51,8 +51,8 @@ export function applySystemAccent(accent: string) {
     --color-text-accent: light-dark(color-mix(in srgb, ${hex} 78%, black), color-mix(in srgb, ${hex} 72%, white));
     --color-icon-accent: light-dark(color-mix(in srgb, ${hex} 85%, black), color-mix(in srgb, ${hex} 75%, white));
     --focus-outline-color: ${hex};
-    --astryx-theme-neutral-color-status-fill-accent: ${hex};
-    --astryx-theme-neutral-color-status-muted-accent: color-mix(in srgb, ${hex} 20%, transparent);
+    --system-accent: ${hex};
+    --color-info-muted: color-mix(in srgb, ${hex} 20%, transparent);
     --shadow-inset-hover: inset 0 0 0 2px color-mix(in srgb, ${hex} 30%, transparent);
     --shadow-inset-selected: inset 0 0 0 2px color-mix(in srgb, ${hex} 50%, transparent);
   }`;

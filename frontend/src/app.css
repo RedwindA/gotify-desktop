@@ -561,6 +561,11 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   height: 8px;
 }
 
+/* The neutral theme's own accent is its text color: without the system's accent, an unread dot is the theme's blue. */
+.msg-unread .astryx-status-dot {
+  background-color: var(--system-accent, var(--color-info));
+}
+
 .msg-view {
   display: flex;
   flex-direction: column;
