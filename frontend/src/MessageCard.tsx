@@ -8,6 +8,7 @@ import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Desktop, type Message } from "./mygo";
 import { useT } from "./i18n";
+import { markdownDataImages } from "./dataImages";
 import { findLinks, markdownLinks } from "./links";
 import { copyMessageImage } from "./MessageShot";
 
@@ -105,6 +106,7 @@ function CopyableCode({ children }: { children: string }) {
 }
 
 const markdownComponents = { link: MessageLink, inlineCode: CopyableCode };
+const markdownPlugins = [...markdownLinks, markdownDataImages];
 
 /** Plain text with its URLs and addresses as links; newlines are kept by the CSS. */
 function PlainBody({ text }: { text: string }) {
@@ -164,7 +166,7 @@ export function MessageBody({ msg, title }: { msg: Message; title: string }) {
               density="compact"
               contentWidth="100%"
               headingLevelStart={4}
-              plugins={markdownLinks}
+              plugins={markdownPlugins}
               components={markdownComponents}>
               {msg.body}
             </Markdown>

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -93,8 +94,13 @@ func (d *Desktop) CopyMessageImage(ctx context.Context, r ImageRequest) error {
 		}()
 	}
 	for _, u := range urls {
-		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		switch {
+		case strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://"):
 			load(u, func() ([]byte, error) { return d.be.FetchImage(ctx, u) })
+		default:
+			if data, ok := decodeDataImage(u); ok {
+				load(u, func() ([]byte, error) { return data, nil })
+			}
 		}
 	}
 	if big != "" {
@@ -278,4 +284,46 @@ func imagesOnly(in []parser.Inline) bool {
 		}
 	}
 	return n > 0
+}
+
+// decodeDataImage returns the bytes of a raster data: image URI (PNG, JPEG,
+// GIF or WebP, base64). SVG and HTML are not images here: they can run script.
+func decodeDataImage(raw string) ([]byte, bool) {
+	s := strings.TrimSpace(raw)
+	const mark = ";base64,"
+	idx := strings.Index(strings.ToLower(s), mark)
+	// The media type lives in a short header; a match further in is in the payload.
+	if idx < 0 || idx > 80 {
+		return nil, false
+	}
+	header := strings.ToLower(strings.ReplaceAll(s[:idx], " ", ""))
+	if !strings.HasPrefix(header, "data:image/") {
+		return nil, false
+	}
+	media := strings.TrimPrefix(header, "data:")
+	typ, params, _ := strings.Cut(media, ";")
+	if typ == "image/jpg" {
+		typ = "image/jpeg"
+	}
+	switch typ {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		return nil, false
+	}
+	if params != "" {
+		for _, param := range strings.Split(params, ";") {
+			if !strings.HasPrefix(param, "charset=") {
+				return nil, false
+			}
+		}
+	}
+	payload := s[idx+len(mark):]
+	if payload == "" {
+		return nil, false
+	}
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
