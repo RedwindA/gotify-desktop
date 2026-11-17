@@ -2,6 +2,12 @@
 
 The section of each version is used for the update window and GitHub Release notes.
 
+## 0.3.12
+
+- Markdown messages show images embedded in the message itself, such as `![](data:image/jpeg;base64,...)`, as Gotify's web UI does, and Copy as image includes them. PNG, JPEG, GIF, WebP, AVIF and BMP show; SVG stays hidden.
+- Dialogs no longer blur the window behind them, and their close button is smaller.
+- Delete actions in menus and error outlines are a lighter red.
+
 ## 0.3.11
 
 - The sidebar is calmer: a row's menu button shows under the pointer or on keyboard focus, in the place of its unread count.
