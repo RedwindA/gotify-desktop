@@ -2,12 +2,16 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/png"
 	"slices"
 	"strings"
 	"testing"
+
+	"gotify-desktop/internal/gotify"
+	"gotify-desktop/internal/store"
 )
 
 func TestCopyMessageImage(t *testing.T) {
@@ -82,5 +86,43 @@ func TestMessageShotTooLong(t *testing.T) {
 	s := &messageShot{body: strings.Repeat("line\n\n", 40000), markdown: true, scale: 2}
 	if _, err := s.render(); err == nil {
 		t.Error("want an error")
+	}
+}
+
+func TestCopyMessageImageWithDataImage(t *testing.T) {
+	f := Demo("https://img.example/chart.png")
+	chart := base64.StdEncoding.EncodeToString(DemoChart())
+	md := map[string]any{"client::display": map[string]any{"contentType": "text/markdown"}}
+	bodies := map[uint]string{
+		50: "data:image/png;base64," + chart,
+		51: "DATA:image/jpeg;base64," + strings.TrimRight(chart, "="), // unpadded, and its type is the bytes'
+		52: "data:image/svg+xml;base64,PHN2Zy8+",
+		53: "data:image/png;base64,@@@@",
+	}
+	for id, src := range bodies {
+		f.Msgs = append(f.Msgs, store.StoredMessage{ServerID: 1, Message: gotify.Message{ID: id, AppID: 1, Message: "Alert\n\n![](" + src + ")", Extras: md}})
+	}
+	f.Refresh()
+	var clip []byte
+	_, d := start(t, f, Platform{CopyImage: func(b []byte) error { clip = b; return nil }})
+	height := func(id uint) int {
+		t.Helper()
+		if err := d.CopyMessageImage(t.Context(), ImageRequest{ServerID: 1, ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		img, err := png.Decode(bytes.NewReader(clip))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return img.Bounds().Dy()
+	}
+	without := height(52)
+	if h := height(53); h != without {
+		t.Errorf("a broken payload is %d tall, SVG %d", h, without)
+	}
+	for _, id := range []uint{50, 51} {
+		if h := height(id); h < without+100 {
+			t.Errorf("message %d: the data image did not show: %d tall, %d without it", id, h, without)
+		}
 	}
 }

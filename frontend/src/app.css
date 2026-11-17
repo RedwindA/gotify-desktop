@@ -328,7 +328,9 @@ html[data-material="sidebar"] .astryx-app-shell [role="main"] {
   cursor: zoom-in;
 }
 
+/* Astryx rounds the images it renders; data: images (dataImages.ts) match them. */
 .msg-view .astryx-markdown img {
+  border-radius: var(--radius-element);
   cursor: zoom-in;
 }
 
