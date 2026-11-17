@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -93,8 +94,11 @@ func (d *Desktop) CopyMessageImage(ctx context.Context, r ImageRequest) error {
 		}()
 	}
 	for _, u := range urls {
-		if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		switch {
+		case strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://"):
 			load(u, func() ([]byte, error) { return d.be.FetchImage(ctx, u) })
+		case len(u) > 5 && strings.EqualFold(u[:5], "data:"):
+			load(u, func() ([]byte, error) { return dataURLBytes(u) })
 		}
 	}
 	if big != "" {
@@ -278,4 +282,15 @@ func imagesOnly(in []parser.Inline) bool {
 		}
 	}
 	return n > 0
+}
+
+// dataURLBytes is the payload of a base64 data: URL, padded or not. Whether
+// it is an image, and one the page shows, load decides from its bytes as it
+// does for a download: SVG and HTML are not taken.
+func dataURLBytes(u string) ([]byte, error) {
+	meta, payload, ok := strings.Cut(u, ",")
+	if !ok || !strings.HasSuffix(strings.ToLower(meta), ";base64") {
+		return nil, errors.New("not a base64 data URL")
+	}
+	return base64.RawStdEncoding.DecodeString(strings.TrimRight(payload, "="))
 }
