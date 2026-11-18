@@ -36,8 +36,11 @@ const shim = `(() => {
   window.mygo = {
     platform: "linux", windowId: 1, version: "preview",
     window: { minimize: noop, maximize: noop, unmaximize: noop, toggleMaximize: noop, isMaximized: async () => false, toggleFullScreen: noop, close: noop, setTitle: noop },
-    async call(method, ...args) {
-      const res = await fetch("/__call", { method: "POST", body: JSON.stringify({ method, args }) });
+    call(method, ...args) {
+      return this.callWith(method, args);
+    },
+    async callWith(method, args, options) {
+      const res = await fetch("/__call", { method: "POST", body: JSON.stringify({ method, args }), signal: options?.signal });
       const body = await res.json();
       if (!res.ok) {
         const err = new Error(body.error);
